@@ -4,21 +4,12 @@ LSP-specific message routing and merging logic.
 
 import asyncio
 from typing import Optional
-from collections import defaultdict
-
-
-class ServerInfo:
-    """Information about a connected LSP server."""
-    def __init__(self, name: str, is_primary: bool):
-        self.name = name
-        self.is_primary = is_primary
-        self.next_id = 1000 if is_primary else 2000  # Separate ID spaces
 
 
 class MessageRouter:
     """
     Routes LSP messages between client and multiple servers.
-    Handles ID mapping, request merging, and notification aggregation.
+    Handles request routing and response merging.
     """
 
     def __init__(self, server_names: list[str]):
@@ -26,68 +17,9 @@ class MessageRouter:
         Initialize router with server names.
         First server is primary, rest are secondary.
         """
-        self.servers = [
-            ServerInfo(name, i == 0)
-            for i, name in enumerate(server_names)
-        ]
-        self.primary = self.servers[0]
-        self.secondaries = self.servers[1:] if len(self.servers) > 1 else []
-
-        # ID mapping: client_id -> {server_name: server_id}
-        self.client_to_server_ids = {}
-
-        # Reverse mapping: (server_name, server_id) -> client_id
-        self.server_to_client_id = {}
-
-        # Track pending diagnostics for aggregation
-        self.pending_diagnostics = {}  # uri -> {server_name: diagnostics}
-        self.diagnostic_timers = {}  # uri -> asyncio.Task
-
-    def allocate_server_id(self, server: ServerInfo) -> int:
-        """Allocate a new request ID for the given server."""
-        request_id = server.next_id
-        server.next_id += 1
-        return request_id
-
-    def map_client_request(self, client_msg: dict, servers: list[ServerInfo]) -> dict[str, dict]:
-        """
-        Map a client request to server requests.
-        Returns {server_name: server_message}
-        """
-        client_id = client_msg.get('id')
-        if client_id is None:
-            # Notification - no ID mapping needed
-            return {srv.name: client_msg for srv in servers}
-
-        # Request - allocate server IDs and track mapping
-        server_messages = {}
-        server_id_map = {}
-
-        for srv in servers:
-            server_id = self.allocate_server_id(srv)
-            server_msg = client_msg.copy()
-            server_msg['id'] = server_id
-
-            server_messages[srv.name] = server_msg
-            server_id_map[srv.name] = server_id
-
-            # Track mapping for response
-            self.server_to_client_id[(srv.name, server_id)] = client_id
-
-        self.client_to_server_ids[client_id] = server_id_map
-        return server_messages
-
-    def map_server_response(self, server_name: str, server_msg: dict) -> Optional[int]:
-        """
-        Map a server response back to client ID.
-        Returns client_id if found, None otherwise.
-        """
-        server_id = server_msg.get('id')
-        if server_id is None:
-            return None
-
-        key = (server_name, server_id)
-        return self.server_to_client_id.get(key)
+        self.server_names = server_names
+        self.primary_name = server_names[0]
+        self.secondary_names = server_names[1:] if len(server_names) > 1 else []
 
     def should_route_to_all(self, method: str) -> bool:
         """Determine if a request should go to all servers."""

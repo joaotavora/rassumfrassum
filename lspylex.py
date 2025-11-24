@@ -167,22 +167,16 @@ async def run_multiplexer(
                     client_id = msg.get('id')
 
                     if router.should_route_to_all(method):
-                        # Send to all servers (e.g., initialize)
-                        server_msgs = router.map_client_request(msg, router.servers)
+                        # Send to all servers with original ID
                         for server in servers:
-                            server_msg = server_msgs.get(server.name)
-                            if server_msg:
-                                await write_lsp_message(server.stdin, server_msg)
+                            await write_lsp_message(server.stdin, msg)
 
                         # Track for merging (only for initialize for now)
                         if method == 'initialize':
                             pending_initialize[client_id] = {}
                     else:
-                        # Send only to primary server
-                        server_msgs = router.map_client_request(msg, [router.primary])
-                        primary_msg = server_msgs.get(servers[0].name)
-                        if primary_msg:
-                            await write_lsp_message(servers[0].stdin, primary_msg)
+                        # Send only to primary server with original ID
+                        await write_lsp_message(servers[0].stdin, msg)
 
         except Exception as e:
             print(f"[lspylex] Error handling client messages: {e}", file=sys.stderr, flush=True)
@@ -203,24 +197,23 @@ async def run_multiplexer(
                 log_message('<--', msg)
 
                 # Check if it's a response to initialize
-                if 'id' in msg and 'result' in msg:
-                    client_id = router.map_server_response(server.name, msg)
-                    if client_id and client_id in pending_initialize:
-                        # Collect initialize response
-                        pending_initialize[client_id][server.name] = msg
+                msg_id = msg.get('id')
+                if msg_id is not None and 'result' in msg and msg_id in pending_initialize:
+                    # Collect initialize response
+                    pending_initialize[msg_id][server.name] = msg
 
-                        # Check if we have all responses
-                        if len(pending_initialize[client_id]) == len(servers):
-                            # Merge and send
-                            merged = await merge_initialize_responses(pending_initialize[client_id])
-                            merged['id'] = client_id
+                    # Check if we have all responses
+                    if len(pending_initialize[msg_id]) == len(servers):
+                        # Merge and send
+                        merged = await merge_initialize_responses(pending_initialize[msg_id])
+                        merged['id'] = msg_id
 
-                            if delay_ms > 0:
-                                await asyncio.sleep(delay_ms / 1000.0)
+                        if delay_ms > 0:
+                            await asyncio.sleep(delay_ms / 1000.0)
 
-                            await write_lsp_message(client_writer, merged)
-                            del pending_initialize[client_id]
-                        continue
+                        await write_lsp_message(client_writer, merged)
+                        del pending_initialize[msg_id]
+                    continue
 
                 # Check for diagnostic notifications
                 if msg.get('method') == 'textDocument/publishDiagnostics':
@@ -234,13 +227,7 @@ async def run_multiplexer(
                         )
                     continue
 
-                # For other responses, map back to client ID and forward
-                if 'id' in msg:
-                    client_id = router.map_server_response(server.name, msg)
-                    if client_id is not None:
-                        msg['id'] = client_id
-
-                # Forward to client
+                # Forward everything else to client with original ID
                 if delay_ms > 0:
                     await asyncio.sleep(delay_ms / 1000.0)
 
