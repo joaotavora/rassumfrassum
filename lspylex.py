@@ -199,6 +199,13 @@ async def run_multiplexer(
                 # Check if it's a response to initialize
                 msg_id = msg.get('id')
                 if msg_id is not None and 'result' in msg and msg_id in pending_initialize:
+                    # Extract server name from serverInfo if present
+                    result = msg.get('result', {})
+                    server_info = result.get('serverInfo', {})
+                    if 'name' in server_info:
+                        server.name = server_info['name']
+                        print(f"[lspylex] Server identified as: {server.name}", file=sys.stderr, flush=True)
+
                     # Collect initialize response
                     pending_initialize[msg_id][server.name] = msg
 
