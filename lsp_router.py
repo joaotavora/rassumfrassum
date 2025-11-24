@@ -21,14 +21,80 @@ class MessageRouter:
         self.primary_name = server_names[0]
         self.secondary_names = server_names[1:] if len(server_names) > 1 else []
 
+        # Track requests that need response merging
+        # request_id -> {method: str, responses: {server_name: response}, expected_count: int}
+        self.pending_merges = {}
+
     def should_route_to_all(self, method: str) -> bool:
         """Determine if a request should go to all servers."""
-        # Only 'initialize' goes to all servers for now
-        return method == 'initialize'
+        return method in ['initialize', 'shutdown']
 
     def is_notification(self, msg: dict) -> bool:
         """Check if message is a notification (no 'id' field)."""
         return 'id' not in msg
+
+    def track_merge_request(self, request_id: int, method: str, server_count: int) -> None:
+        """Start tracking a request that needs response merging."""
+        self.pending_merges[request_id] = {
+            'method': method,
+            'responses': {},
+            'expected_count': server_count
+        }
+
+    def is_pending_merge(self, request_id: int) -> bool:
+        """Check if a request ID is pending merge."""
+        return request_id in self.pending_merges
+
+    async def add_response(self, request_id: int, server_name: str, response: dict) -> tuple[bool, Optional[dict], dict]:
+        """
+        Add a server response to pending merge.
+        Returns (is_complete, merged_response, metadata).
+        If is_complete is True, all responses received and merged_response is ready.
+        """
+        if request_id not in self.pending_merges:
+            return (False, None, {})
+
+        merge_state = self.pending_merges[request_id]
+        merge_state['responses'][server_name] = response
+
+        # Check if all responses collected
+        if len(merge_state['responses']) == merge_state['expected_count']:
+            method = merge_state['method']
+            merged = await self._merge_responses(method, merge_state['responses'])
+            metadata = self._extract_metadata(method, merge_state['responses'])
+            del self.pending_merges[request_id]
+            return (True, merged, metadata)
+
+        return (False, None, {})
+
+    async def _merge_responses(self, method: str, responses: dict[str, dict]) -> dict:
+        """Merge responses based on method type."""
+        if method == 'initialize':
+            return await merge_initialize_responses(responses)
+        elif method == 'shutdown':
+            # Shutdown returns null, just take first response
+            return next(iter(responses.values()))
+        else:
+            # Default: take primary's response (shouldn't reach here)
+            return next(iter(responses.values()))
+
+    def _extract_metadata(self, method: str, responses: dict[str, dict]) -> dict:
+        """Extract method-specific metadata for lspylex to process."""
+        metadata = {}
+
+        if method == 'initialize':
+            # Extract serverInfo names for each server
+            server_names = {}
+            for server_name, response in responses.items():
+                result = response.get('result', {})
+                server_info = result.get('serverInfo', {})
+                if 'name' in server_info:
+                    server_names[server_name] = server_info['name']
+
+            if server_names:
+                metadata['server_names'] = server_names
+
+        return metadata
 
 
 async def merge_initialize_responses(responses: dict[str, dict]) -> dict:

@@ -128,9 +128,6 @@ async def run_multiplexer(
         client_writer_transport, client_writer_protocol, None, loop
     )
 
-    # Track pending initialize responses
-    pending_initialize = {}  # client_id -> {server_name: response}
-
     async def send_diagnostic_to_client(uri: str, diagnostics: list):
         """Callback for sending merged diagnostics to client."""
         notification = {
@@ -171,9 +168,8 @@ async def run_multiplexer(
                         for server in servers:
                             await write_lsp_message(server.stdin, msg)
 
-                        # Track for merging (only for initialize for now)
-                        if method == 'initialize':
-                            pending_initialize[client_id] = {}
+                        # Track for merging
+                        router.track_merge_request(client_id, method, len(servers))
                     else:
                         # Send only to primary server with original ID
                         await write_lsp_message(servers[0].stdin, msg)
@@ -196,30 +192,26 @@ async def run_multiplexer(
 
                 log_message('<--', msg)
 
-                # Check if it's a response to initialize
+                # Check if response is part of a pending merge
                 msg_id = msg.get('id')
-                if msg_id is not None and 'result' in msg and msg_id in pending_initialize:
-                    # Extract server name from serverInfo if present
-                    result = msg.get('result', {})
-                    server_info = result.get('serverInfo', {})
-                    if 'name' in server_info:
-                        server.name = server_info['name']
-                        print(f"[lspylex] Server identified as: {server.name}", file=sys.stderr, flush=True)
+                if msg_id is not None and 'result' in msg and router.is_pending_merge(msg_id):
+                    # Add response to router
+                    is_complete, merged, metadata = await router.add_response(msg_id, server.name, msg)
 
-                    # Collect initialize response
-                    pending_initialize[msg_id][server.name] = msg
+                    if is_complete:
+                        # Process metadata (e.g., serverInfo extraction)
+                        if 'server_names' in metadata:
+                            for old_name, new_name in metadata['server_names'].items():
+                                for s in servers:
+                                    if s.name == old_name:
+                                        s.name = new_name
+                                        print(f"[lspylex] Server identified as: {new_name}", file=sys.stderr, flush=True)
 
-                    # Check if we have all responses
-                    if len(pending_initialize[msg_id]) == len(servers):
-                        # Merge and send
-                        merged = await merge_initialize_responses(pending_initialize[msg_id])
+                        # Send merged response to client
                         merged['id'] = msg_id
-
                         if delay_ms > 0:
                             await asyncio.sleep(delay_ms / 1000.0)
-
                         await write_lsp_message(client_writer, merged)
-                        del pending_initialize[msg_id]
                     continue
 
                 # Check for diagnostic notifications
