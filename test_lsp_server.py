@@ -55,40 +55,41 @@ def main():
             if message is None:
                 break
 
-            if 'method' in message:
-                method = message['method']
+            method = message.get('method')
+            msg_id = message.get('id')
 
-                if method == 'initialize':
-                    # Return realistic initialize response
-                    response = {
-                        'jsonrpc': '2.0',
-                        'id': message.get('id'),
-                        'result': {
-                            'capabilities': CAPABILITIES[args.capabilities],
-                            'serverInfo': {
-                                'name': args.name,
-                                'version': args.version
-                            }
+            if method == 'initialize':
+                # Return realistic initialize response
+                response = {
+                    'jsonrpc': '2.0',
+                    'id': msg_id,
+                    'result': {
+                        'capabilities': CAPABILITIES[args.capabilities],
+                        'serverInfo': {
+                            'name': args.name,
+                            'version': args.version
                         }
                     }
-                elif method == 'initialized':
-                    # Notification - no response needed
-                    continue
-                elif method == 'shutdown':
-                    response = {
-                        'jsonrpc': '2.0',
-                        'id': message.get('id'),
-                        'result': None
-                    }
-                else:
-                    # Echo other methods
-                    response = {
-                        'jsonrpc': '2.0',
-                        'id': message.get('id'),
-                        'result': f"Echo: {method}"
-                    }
-
+                }
                 write_message_sync(response)
+
+            elif method == 'shutdown':
+                # Reply to shutdown and exit
+                response = {
+                    'jsonrpc': '2.0',
+                    'id': msg_id,
+                    'result': None
+                }
+                write_message_sync(response)
+                print(f"{args.name} shutting down", file=sys.stderr, flush=True)
+                break
+
+            else:
+                # Log all other requests and notifications
+                if msg_id is not None:
+                    print(f"{args.name}: request {method} (id={msg_id})", file=sys.stderr, flush=True)
+                else:
+                    print(f"{args.name}: notification {method}", file=sys.stderr, flush=True)
 
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr, flush=True)
