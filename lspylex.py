@@ -3,16 +3,29 @@
 lspylex - A simple LSP multiplexer that forwards JSONRPC messages.
 """
 
+import json
 import asyncio
 import sys
-import json
 import os
-from typing import Optional
+from typing import Any, Deque
+from collections import deque  # pyright: ignore[reportUnusedImport]
+from dataclasses import dataclass
+
+from lsp_router import MessageRouter, merge_initialize_responses, DiagnosticAggregator
 
 
-async def read_lsp_message(reader: asyncio.StreamReader) -> Optional[dict]:
+@dataclass
+class ServerProcess:
+    """Information about a running server subprocess."""
+    name: str
+    process: asyncio.subprocess.Process
+    stdin: asyncio.StreamWriter
+    stdout: asyncio.StreamReader
+    stderr: asyncio.StreamReader
+
+async def read_lsp_message(reader: asyncio.StreamReader) -> dict[str, Any] | None:
     """
-    Read a single LSP message from the stream.
+    Read a songle LSP message from the stream.
     LSP uses HTTP-style headers: Content-Length: N\r\n\r\n{json}
     """
     headers = {}
@@ -141,6 +154,30 @@ async def forward_server_stderr(
         print(f"[{server_name}] Error reading stderr: {e}", file=sys.stderr, flush=True)
 
 
+async def launch_server(server_command: list[str], server_index: int) -> ServerProcess:
+    """Launch a single LSP server subprocess."""
+    basename = os.path.basename(server_command[0])
+    # Make name unique by including index for multiple servers
+    name = f"{basename}#{server_index}" if server_index > 0 else basename
+
+    print(f"[lspylex] Launching {name}: {' '.join(server_command)}", file=sys.stderr, flush=True)
+
+    process = await asyncio.create_subprocess_exec(
+        *server_command,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+
+    return ServerProcess(
+        name=name,
+        process=process,
+        stdin=process.stdin,
+        stdout=process.stdout,
+        stderr=process.stderr
+    )
+
+
 async def run_multiplexer(
     server_command: list[str],
     quiet_server: bool = False,
@@ -199,23 +236,225 @@ async def run_multiplexer(
     await server_process.wait()
 
 
+async def run_multi_server_multiplexer(
+    server_commands: list[list[str]],
+    quiet_server: bool = False,
+    delay_ms: int = 0
+) -> None:
+    """
+    Main multiplexer loop for multiple servers.
+    """
+    # Launch all servers
+    servers = []
+    for i, cmd in enumerate(server_commands):
+        server = await launch_server(cmd, i)
+        servers.append(server)
+
+    # Create message router
+    server_names = [s.name for s in servers]
+    router = MessageRouter(server_names)
+    diagnostic_aggregator = DiagnosticAggregator(timeout_ms=1000)
+
+    print(f"[lspylex] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
+    if len(servers) > 1:
+        secondaries = [s.name for s in servers[1:]]
+        print(f"[lspylex] Secondary servers: {', '.join(secondaries)}", file=sys.stderr, flush=True)
+    if delay_ms > 0:
+        print(f"[lspylex] Delaying server responses by {delay_ms}ms", file=sys.stderr, flush=True)
+
+    # Get client streams
+    loop = asyncio.get_event_loop()
+
+    client_reader = asyncio.StreamReader()
+    client_protocol = asyncio.StreamReaderProtocol(client_reader)
+    await loop.connect_read_pipe(lambda: client_protocol, sys.stdin)
+
+    client_writer_transport, client_writer_protocol = await loop.connect_write_pipe(
+        asyncio.streams.FlowControlMixin, sys.stdout
+    )
+    client_writer = asyncio.StreamWriter(
+        client_writer_transport, client_writer_protocol, None, loop
+    )
+
+    # Track pending initialize responses
+    pending_initialize = {}  # client_id -> {server_name: response}
+
+    async def send_diagnostic_to_client(uri: str, diagnostics: list):
+        """Callback for sending merged diagnostics to client."""
+        notification = {
+            'jsonrpc': '2.0',
+            'method': 'textDocument/publishDiagnostics',
+            'params': {
+                'uri': uri,
+                'diagnostics': diagnostics
+            }
+        }
+        log_message('<--', notification)
+        if delay_ms > 0:
+            await asyncio.sleep(delay_ms / 1000.0)
+        await write_lsp_message(client_writer, notification)
+
+    async def handle_client_messages():
+        """Read from client and route to appropriate servers."""
+        try:
+            while True:
+                msg = await read_lsp_message(client_reader)
+                if msg is None:
+                    break
+
+                log_message('-->', msg)
+
+                # Route based on message type
+                if router.is_notification(msg):
+                    # Broadcast all notifications to all servers
+                    for server in servers:
+                        await write_lsp_message(server.stdin, msg)
+                else:
+                    # Request - check if it should go to all servers
+                    method = msg.get('method')
+                    client_id = msg.get('id')
+
+                    if router.should_route_to_all(method):
+                        # Send to all servers (e.g., initialize)
+                        server_msgs = router.map_client_request(msg, router.servers)
+                        for server in servers:
+                            server_msg = server_msgs.get(server.name)
+                            if server_msg:
+                                await write_lsp_message(server.stdin, server_msg)
+
+                        # Track for merging (only for initialize for now)
+                        if method == 'initialize':
+                            pending_initialize[client_id] = {}
+                    else:
+                        # Send only to primary server
+                        server_msgs = router.map_client_request(msg, [router.primary])
+                        primary_msg = server_msgs.get(servers[0].name)
+                        if primary_msg:
+                            await write_lsp_message(servers[0].stdin, primary_msg)
+
+        except Exception as e:
+            print(f"[lspylex] Error handling client messages: {e}", file=sys.stderr, flush=True)
+        finally:
+            # Close all server stdin
+            for server in servers:
+                server.stdin.close()
+                await server.stdin.wait_closed()
+
+    async def handle_server_messages(server: ServerProcess):
+        """Read from a server and route back to client."""
+        try:
+            while True:
+                msg = await read_lsp_message(server.stdout)
+                if msg is None:
+                    break
+
+                log_message('<--', msg)
+
+                # Check if it's a response to initialize
+                if 'id' in msg and 'result' in msg:
+                    client_id = router.map_server_response(server.name, msg)
+                    if client_id and client_id in pending_initialize:
+                        # Collect initialize response
+                        pending_initialize[client_id][server.name] = msg
+
+                        # Check if we have all responses
+                        if len(pending_initialize[client_id]) == len(servers):
+                            # Merge and send
+                            merged = await merge_initialize_responses(pending_initialize[client_id])
+                            merged['id'] = client_id
+
+                            if delay_ms > 0:
+                                await asyncio.sleep(delay_ms / 1000.0)
+
+                            await write_lsp_message(client_writer, merged)
+                            del pending_initialize[client_id]
+                        continue
+
+                # Check for diagnostic notifications
+                if msg.get('method') == 'textDocument/publishDiagnostics':
+                    params = msg.get('params', {})
+                    uri = params.get('uri')
+                    diagnostics = params.get('diagnostics', [])
+
+                    if uri:
+                        await diagnostic_aggregator.add_diagnostic(
+                            uri, server.name, diagnostics, send_diagnostic_to_client
+                        )
+                    continue
+
+                # For other responses, map back to client ID and forward
+                if 'id' in msg:
+                    client_id = router.map_server_response(server.name, msg)
+                    if client_id is not None:
+                        msg['id'] = client_id
+
+                # Forward to client
+                if delay_ms > 0:
+                    await asyncio.sleep(delay_ms / 1000.0)
+
+                await write_lsp_message(client_writer, msg)
+
+        except Exception as e:
+            print(f"[lspylex] Error handling messages from {server.name}: {e}", file=sys.stderr, flush=True)
+        finally:
+            pass
+
+    # Create all tasks
+    tasks = [handle_client_messages()]
+
+    for server in servers:
+        tasks.append(handle_server_messages(server))
+
+        # Forward stderr
+        if not quiet_server:
+            tasks.append(forward_server_stderr(server.stderr, server.name))
+
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Wait for all servers to exit
+    for server in servers:
+        await server.process.wait()
+
+
+def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
+    """
+    Split args on '--' separators.
+    Returns (lspylex_args, [server_command1, server_command2, ...])
+    """
+    if '--' not in args:
+        return args, []
+
+    # Find all '--' separator indices
+    separator_indices = [i for i, arg in enumerate(args) if arg == '--']
+
+    # Everything before first '--' is lspylex options
+    lspylex_args = args[:separator_indices[0]]
+
+    # Split server commands
+    server_commands = []
+    for i, sep_idx in enumerate(separator_indices):
+        # Find start and end of this server command
+        start = sep_idx + 1
+        end = separator_indices[i + 1] if i + 1 < len(separator_indices) else len(args)
+
+        server_cmd = args[start:end]
+        if server_cmd:  # Only add non-empty commands
+            server_commands.append(server_cmd)
+
+    return lspylex_args, server_commands
+
+
 def main() -> None:
     """
     Parse arguments and start the multiplexer.
     """
     args = sys.argv[1:]
 
-    # Find the '--' separator
-    if '--' not in args:
-        print("[lspylex] Usage: lspylex [--quiet-server] [--delay-ms N] -- <server-command> [server-args...]", file=sys.stderr)
-        sys.exit(1)
+    # Parse multiple '--' separators for multiple servers
+    lspylex_args, server_commands = parse_server_commands(args)
 
-    separator_index = args.index('--')
-    lspylex_args = args[:separator_index]
-    server_command = args[separator_index + 1:]
-
-    if not server_command:
-        print("[lspylex] Error: No server command specified after '--'", file=sys.stderr)
+    if not server_commands:
+        print("[lspylex] Usage: lspylex [--quiet-server] [--delay-ms N] -- <primary-server> [args] [-- <secondary-server> [args]]...", file=sys.stderr)
         sys.exit(1)
 
     # Parse lspylex options
@@ -237,8 +476,14 @@ def main() -> None:
             print("[lspylex] Error: --delay-ms requires a numeric argument", file=sys.stderr)
             sys.exit(1)
 
+    # Choose single or multi-server mode
     try:
-        asyncio.run(run_multiplexer(server_command, quiet_server=quiet_server, delay_ms=delay_ms))
+        if len(server_commands) == 1:
+            # Single server mode - use simple forwarding
+            asyncio.run(run_multiplexer(server_commands[0], quiet_server=quiet_server, delay_ms=delay_ms))
+        else:
+            # Multi-server mode - use router
+            asyncio.run(run_multi_server_multiplexer(server_commands, quiet_server=quiet_server, delay_ms=delay_ms))
     except KeyboardInterrupt:
         print("\n[lspylex] Shutting down...", file=sys.stderr, flush=True)
     except Exception as e:

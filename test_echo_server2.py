@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-A simple echo server that mimics LSP protocol for testing.
+A second echo server for testing multi-server setup.
 """
 import sys
 import json
@@ -40,7 +40,7 @@ def write_lsp_message(message):
 
 def main():
     """Echo back any message received."""
-    print("Echo server started", file=sys.stderr, flush=True)
+    print("Echo server 2 started", file=sys.stderr, flush=True)
 
     while True:
         try:
@@ -48,7 +48,7 @@ def main():
             if message is None:
                 break
 
-            # Echo it back with a modification to show it went through
+            # Echo it back with a modification to show it went through server 2
             if 'method' in message:
                 if message['method'] == 'initialize':
                     response = {
@@ -56,18 +56,17 @@ def main():
                         'id': message.get('id'),
                         'result': {
                             'capabilities': {
-                                'textDocumentSync': 2,
-                                'hoverProvider': True,
-                                'definitionProvider': True,
+                                'textDocumentSync': 1,
+                                'completionProvider': {'triggerCharacters': ['.']},
                             },
-                            'serverInfo': {'name': 'test-server-1', 'version': '1.0'}
+                            'serverInfo': {'name': 'test-server-2', 'version': '1.0'}
                         }
                     }
                 else:
                     response = {
                         'jsonrpc': '2.0',
                         'id': message.get('id'),
-                        'result': f"Echo: {message['method']}"
+                        'result': f"Echo2: {message['method']}"
                     }
             else:
                 response = message
@@ -78,7 +77,7 @@ def main():
             print(f"Error: {e}", file=sys.stderr, flush=True)
             break
 
-    print("Echo server stopped", file=sys.stderr, flush=True)
+    print("Echo server 2 stopped", file=sys.stderr, flush=True)
 
 
 if __name__ == '__main__':
