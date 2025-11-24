@@ -51,7 +51,7 @@ async def write_message(writer: asyncio.StreamWriter, message: dict) -> None:
     await writer.drain()
 
 
-def read_message_sync(stream=None) -> dict[str, Any] | None:
+def read_message_sync(stream=None, verbose=False) -> dict[str, Any] | None:
     """
     Read a single JSONRPC message from stdin (or provided stream) synchronously.
     Returns None on EOF.
@@ -62,6 +62,7 @@ def read_message_sync(stream=None) -> dict[str, Any] | None:
     headers = {}
     while True:
         line = stream.readline()
+
         if not line:
             return None
         line = line.decode('utf-8').strip()
@@ -75,6 +76,8 @@ def read_message_sync(stream=None) -> dict[str, Any] | None:
     if content_length == 0:
         return None
 
+    
+    
     content = stream.read(content_length)
     return json.loads(content.decode('utf-8'))
 

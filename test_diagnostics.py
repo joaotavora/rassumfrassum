@@ -24,8 +24,8 @@ def main():
         'params': {}
     }, "Sending initialize")
 
-    response = read_message_sync()
-    print(f"<== Got initialize response", file=sys.stderr)
+    response = read_message_sync(verbose=True)
+    print(f"[client] Got initialize response {response}", file=sys.stderr)
 
     # 2. Initialized notification
     send_and_log({
@@ -49,11 +49,11 @@ def main():
     }, "Sending didOpen notification")
 
     # Wait for merged diagnostics (aggregator has 1s timeout)
-    print("\n==> Waiting 1.5s for aggregated diagnostics...", file=sys.stderr)
-    time.sleep(1.5)
+    # print("[client] Waiting 1.5s for aggregated diagnostics...", file=sys.stderr)
+    # time.sleep(1.5)
 
-    print("==> Reading diagnostic message", file=sys.stderr)
-    msg = read_message_sync()
+    print("[client] Reading diagnostic message", file=sys.stderr)
+    msg = read_message_sync(verbose=True)
     if msg:
         method = msg.get('method', 'response')
         print(f"<== Received {method}", file=sys.stderr)
@@ -67,7 +67,7 @@ def main():
                 severity = diag.get('severity', 0)
                 print(f"    [{i}] {source} (severity={severity}): {message}", file=sys.stderr)
     else:
-        print("    ERROR: No diagnostic received!", file=sys.stderr)
+        print("[client] ERROR: No diagnostic received!", file=sys.stderr)
 
     # 4. Shutdown
     send_and_log({

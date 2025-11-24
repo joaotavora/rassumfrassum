@@ -40,16 +40,16 @@ CAPABILITIES = {
 
 def main():
     parser = argparse.ArgumentParser(description='Test LSP server')
-    parser.add_argument('--name', default='test-server', help='Server name for serverInfo')
-    parser.add_argument('--version', default='1.0.0', help='Server version')
-    parser.add_argument('--capabilities', default='basedpyright',
+    _ = parser.add_argument('--name', default='test-server', help='Server name for serverInfo')
+    _ = parser.add_argument('--version', default='1.0.0', help='Server version')
+    _ = parser.add_argument('--capabilities', default='basedpyright',
                         choices=['basedpyright', 'ruff'],
                         help='Which capability set to use')
-    parser.add_argument('--publish-diagnostics', action='store_true',
+    _ = parser.add_argument('--publish-diagnostics', action='store_true',
                         help='Send diagnostics after didOpen')
     args = parser.parse_args()
 
-    print(f"{args.name} started", file=sys.stderr, flush=True)
+    print(f"Started!", file=sys.stderr, flush=True)
 
     while True:
         try:
@@ -61,7 +61,7 @@ def main():
             msg_id = message.get('id')
 
             if method == 'initialize':
-                # Return realistic initialize response
+                # Return "realistic" initialize response
                 response = {
                     'jsonrpc': '2.0',
                     'id': msg_id,
@@ -92,7 +92,7 @@ def main():
                 text_doc = params.get('textDocument', {})
                 uri = text_doc.get('uri', 'file:///unknown')
 
-                print(f"{args.name}: notification {method}", file=sys.stderr, flush=True)
+                print(f"got notification {method}", file=sys.stderr, flush=True)
 
                 # Publish diagnostics for this file
                 diagnostic_notification = {
@@ -107,7 +107,7 @@ def main():
                                     'end': {'line': 0, 'character': 5}
                                 },
                                 'severity': 1,  # Error
-                                'message': f'{args.name}: example error'
+                                'message': f'An example error from {args.name}'
                             },
                             {
                                 'range': {
@@ -115,26 +115,26 @@ def main():
                                     'end': {'line': 0, 'character': 12}
                                 },
                                 'severity': 2,  # Warning
-                                'message': f'{args.name}: example warning'
+                                'message': f'An example warning from {args.name}'
                             }
                         ]
                     }
                 }
                 write_message_sync(diagnostic_notification)
-                print(f"{args.name}: published diagnostics for {uri}", file=sys.stderr, flush=True)
+                print(f"published diagnostics for {uri}", file=sys.stderr, flush=True)
 
             else:
                 # Log all other requests and notifications
                 if msg_id is not None:
-                    print(f"{args.name}: request {method} (id={msg_id})", file=sys.stderr, flush=True)
+                    print(f"request {method} (id={msg_id})", file=sys.stderr, flush=True)
                 else:
-                    print(f"{args.name}: notification {method}", file=sys.stderr, flush=True)
+                    print(f"notification {method}", file=sys.stderr, flush=True)
 
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr, flush=True)
             break
 
-    print(f"{args.name} stopped", file=sys.stderr, flush=True)
+    print(f"stopped", file=sys.stderr, flush=True)
 
 
 if __name__ == '__main__':

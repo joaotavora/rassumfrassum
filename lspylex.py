@@ -7,11 +7,10 @@ import json
 import asyncio
 import sys
 import os
-from typing import Any, Deque
 from collections import deque  # pyright: ignore[reportUnusedImport]
 from dataclasses import dataclass
 
-from lsp_router import MessageRouter, merge_initialize_responses, DiagnosticAggregator
+from lsp_router import MessageRouter, DiagnosticAggregator
 from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message
 
 
@@ -44,23 +43,22 @@ def log_message(direction: str, message: dict) -> None:
 
 
 async def forward_server_stderr(
-    server_stderr: asyncio.StreamReader,
-    server_name: str
+    server: ServerProcess
 ) -> None:
     """
     Forward server's stderr to our stderr, prefixing each line with the server basename.
     """
     try:
         while True:
-            line = await server_stderr.readline()
+            line = await server.stderr.readline()
             if not line:
                 break
 
             # Decode and strip only the trailing newline (preserve other whitespace)
             line_str = line.decode('utf-8', errors='replace').rstrip('\n\r')
-            print(f"[{server_name}] {line_str}", file=sys.stderr, flush=True)
+            print(f"[lspylex,{server.name}] {line_str}", file=sys.stderr, flush=True)
     except Exception as e:
-        print(f"[{server_name}] Error reading stderr: {e}", file=sys.stderr, flush=True)
+        print(f"[lspylex,{server.name}] Error reading stderr: {e}", file=sys.stderr, flush=True)
 
 
 async def launch_server(server_command: list[str], server_index: int) -> ServerProcess:
@@ -138,9 +136,9 @@ async def run_multiplexer(
                 'diagnostics': diagnostics
             }
         }
-        log_message('<--', notification)
         if delay_ms > 0:
             await asyncio.sleep(delay_ms / 1000.0)
+        log_message('<--c', notification)
         await write_lsp_message(client_writer, notification)
 
     async def handle_client_messages():
@@ -151,7 +149,7 @@ async def run_multiplexer(
                 if msg is None:
                     break
 
-                log_message('-->', msg)
+                log_message('c-->', msg)
 
                 # Route based on message type
                 if router.is_notification(msg):
@@ -167,12 +165,14 @@ async def run_multiplexer(
                         # Send to all servers with original ID
                         for server in servers:
                             await write_lsp_message(server.stdin, msg)
+                            log_message(f'[{server.name}]s-->', msg)
 
                         # Track for merging
                         router.track_merge_request(client_id, method, len(servers))
                     else:
                         # Send only to primary server with original ID
                         await write_lsp_message(servers[0].stdin, msg)
+                        log_message(f'[{servers[0].name}]s-->', msg)
 
         except Exception as e:
             print(f"[lspylex] Error handling client messages: {e}", file=sys.stderr, flush=True)
@@ -190,7 +190,7 @@ async def run_multiplexer(
                 if msg is None:
                     break
 
-                log_message('<--', msg)
+                log_message('<--s', msg)
 
                 # Check if response is part of a pending merge
                 msg_id = msg.get('id')
@@ -245,7 +245,7 @@ async def run_multiplexer(
 
         # Forward stderr
         if not quiet_server:
-            tasks.append(forward_server_stderr(server.stderr, server.name))
+            tasks.append(forward_server_stderr(server))
 
     await asyncio.gather(*tasks, return_exceptions=True)
 
