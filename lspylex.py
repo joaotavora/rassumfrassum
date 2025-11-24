@@ -83,57 +83,6 @@ def log_message(direction: str, message: dict) -> None:
     print(f"[lspylex] {direction} {msg_type} {json_str}", file=sys.stderr, flush=True)
 
 
-async def forward_client_to_server(
-    client_reader: asyncio.StreamReader,
-    server_writer: asyncio.StreamWriter
-) -> None:
-    """
-    Forward messages from client to server.
-    """
-    try:
-        while True:
-            message = await read_lsp_message(client_reader)
-            if message is None:
-                break
-
-            log_message('-->', message)
-            await write_lsp_message(server_writer, message)
-    except Exception as e:
-        print(f"[lspylex] Error in client->server forwarding: {e}", file=sys.stderr, flush=True)
-    finally:
-        server_writer.close()
-        await server_writer.wait_closed()
-
-
-async def forward_server_to_client(
-    server_reader: asyncio.StreamReader,
-    client_writer: asyncio.StreamWriter,
-    delay_ms: int = 0
-) -> None:
-    """
-    Forward messages from server to client.
-    Optionally delays each message by delay_ms milliseconds.
-    """
-    try:
-        while True:
-            message = await read_lsp_message(server_reader)
-            if message is None:
-                break
-
-            log_message('<--', message)
-
-            # Optional delay before forwarding to client
-            if delay_ms > 0:
-                await asyncio.sleep(delay_ms / 1000.0)
-
-            await write_lsp_message(client_writer, message)
-    except Exception as e:
-        print(f"[lspylex] Error in server->client forwarding: {e}", file=sys.stderr, flush=True)
-    finally:
-        client_writer.close()
-        await client_writer.wait_closed()
-
-
 async def forward_server_stderr(
     server_stderr: asyncio.StreamReader,
     server_name: str
@@ -179,70 +128,13 @@ async def launch_server(server_command: list[str], server_index: int) -> ServerP
 
 
 async def run_multiplexer(
-    server_command: list[str],
-    quiet_server: bool = False,
-    delay_ms: int = 0
-) -> None:
-    """
-    Main multiplexer loop.
-    """
-    # Extract basename for stderr prefixing
-    server_basename = os.path.basename(server_command[0])
-
-    print(f"[lspylex] Starting LSP server: {' '.join(server_command)}", file=sys.stderr, flush=True)
-    if delay_ms > 0:
-        print(f"[lspylex] Delaying server responses by {delay_ms}ms", file=sys.stderr, flush=True)
-
-    # Start the LSP server subprocess
-    server_process = await asyncio.create_subprocess_exec(
-        *server_command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE  # Capture stderr to prefix it
-    )
-
-    # Get client streams (stdin/stdout of this process)
-    loop = asyncio.get_event_loop()
-
-    client_reader = asyncio.StreamReader()
-    client_protocol = asyncio.StreamReaderProtocol(client_reader)
-    await loop.connect_read_pipe(lambda: client_protocol, sys.stdin)
-
-    client_writer_transport, client_writer_protocol = await loop.connect_write_pipe(
-        asyncio.streams.FlowControlMixin, sys.stdout
-    )
-    client_writer = asyncio.StreamWriter(
-        client_writer_transport, client_writer_protocol, None, loop
-    )
-
-    # Server streams from subprocess
-    server_reader = server_process.stdout
-    server_writer = server_process.stdin
-    server_stderr = server_process.stderr
-
-    # Create bidirectional forwarding tasks
-    tasks = [
-        forward_client_to_server(client_reader, server_writer),
-        forward_server_to_client(server_reader, client_writer, delay_ms),
-    ]
-
-    # Only forward server stderr if not suppressed
-    if not quiet_server:
-        tasks.append(forward_server_stderr(server_stderr, server_basename))
-
-    await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Wait for server to exit
-    await server_process.wait()
-
-
-async def run_multi_server_multiplexer(
     server_commands: list[list[str]],
     quiet_server: bool = False,
     delay_ms: int = 0
 ) -> None:
     """
-    Main multiplexer loop for multiple servers.
+    Main multiplexer loop.
+    Handles one or more LSP servers with intelligent message routing.
     """
     # Launch all servers
     servers = []
@@ -476,14 +368,8 @@ def main() -> None:
             print("[lspylex] Error: --delay-ms requires a numeric argument", file=sys.stderr)
             sys.exit(1)
 
-    # Choose single or multi-server mode
     try:
-        if len(server_commands) == 1:
-            # Single server mode - use simple forwarding
-            asyncio.run(run_multiplexer(server_commands[0], quiet_server=quiet_server, delay_ms=delay_ms))
-        else:
-            # Multi-server mode - use router
-            asyncio.run(run_multi_server_multiplexer(server_commands, quiet_server=quiet_server, delay_ms=delay_ms))
+        asyncio.run(run_multiplexer(server_commands, quiet_server=quiet_server, delay_ms=delay_ms))
     except KeyboardInterrupt:
         print("\n[lspylex] Shutting down...", file=sys.stderr, flush=True)
     except Exception as e:
