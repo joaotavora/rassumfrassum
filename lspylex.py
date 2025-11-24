@@ -12,6 +12,7 @@ from collections import deque  # pyright: ignore[reportUnusedImport]
 from dataclasses import dataclass
 
 from lsp_router import MessageRouter, merge_initialize_responses, DiagnosticAggregator
+from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message
 
 
 @dataclass
@@ -22,47 +23,6 @@ class ServerProcess:
     stdin: asyncio.StreamWriter
     stdout: asyncio.StreamReader
     stderr: asyncio.StreamReader
-
-async def read_lsp_message(reader: asyncio.StreamReader) -> dict[str, Any] | None:
-    """
-    Read a songle LSP message from the stream.
-    LSP uses HTTP-style headers: Content-Length: N\r\n\r\n{json}
-    """
-    headers = {}
-
-    while True:
-        line = await reader.readline()
-        if not line:
-            return None
-
-        line = line.decode('utf-8').strip()
-        if not line:
-            # Empty line signals end of headers
-            break
-
-        if ':' in line:
-            key, value = line.split(':', 1)
-            headers[key.strip()] = value.strip()
-
-    content_length = headers.get('Content-Length')
-    if not content_length:
-        return None
-
-    content = await reader.readexactly(int(content_length))
-    return json.loads(content.decode('utf-8'))
-
-
-async def write_lsp_message(writer: asyncio.StreamWriter, message: dict) -> None:
-    """
-    Write a single LSP message to the stream.
-    """
-    content = json.dumps(message, ensure_ascii=False)
-    content_bytes = content.encode('utf-8')
-
-    header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
-    writer.write(header.encode('utf-8'))
-    writer.write(content_bytes)
-    await writer.drain()
 
 
 def log_message(direction: str, message: dict) -> None:
