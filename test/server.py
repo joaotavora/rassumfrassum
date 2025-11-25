@@ -9,8 +9,7 @@ from pathlib import Path
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
 
-from jsonrpc import read_message_sync, write_message_sync
-from utils import JSON
+from jsonrpc import read_message_sync, write_message_sync, JSON
 import argparse
 from typing import cast
 

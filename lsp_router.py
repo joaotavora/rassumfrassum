@@ -164,7 +164,7 @@ class DiagnosticAggregator:
         uri: str,
         server_name: str,
         diagnostics: list[JSON],
-        callback: function
+        callback
     ):
         """
         Add diagnostics from a server.

@@ -9,8 +9,10 @@ from pathlib import Path
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
 
-from jsonrpc import read_message_sync, write_message_sync
-from utils import log, JSON
+from jsonrpc import read_message_sync, write_message_sync, JSON
+
+def log(prefix : str , msg : str):
+    print(f'[{prefix}] {msg}', file=sys.stderr)
 
 def send_and_log(message : JSON, description : str):
     """Send a message and log what we're doing."""
