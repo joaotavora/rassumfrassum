@@ -3,8 +3,8 @@ LSP-specific message routing and merging logic.
 """
 
 import asyncio
-from typing import Optional
-
+from typing import Any
+from jsonrpc import JSON
 
 class MessageRouter:
     """
@@ -17,19 +17,19 @@ class MessageRouter:
         Initialize router with server names.
         First server is primary, rest are secondary.
         """
-        self.server_names = server_names
-        self.primary_name = server_names[0]
-        self.secondary_names = server_names[1:] if len(server_names) > 1 else []
+        self.server_names : list[str] = server_names
+        self.primary_name : str = server_names[0]
+        self.secondary_names : list[str] = server_names[1:] if len(server_names) > 1 else []
 
         # Track requests that need response merging
         # request_id -> {method: str, responses: {server_name: response}, expected_count: int}
-        self.pending_merges = {}
+        self.pending_merges : dict[int, dict[str, Any]]= {}  # pyright: ignore[reportExplicitAny]
 
     def should_route_to_all(self, method: str) -> bool:
         """Determine if a request should go to all servers."""
         return method in ['initialize', 'shutdown']
 
-    def is_notification(self, msg: dict) -> bool:
+    def is_notification(self, msg: JSON) -> bool:
         """Check if message is a notification (no 'id' field)."""
         return 'id' not in msg
 
@@ -45,7 +45,7 @@ class MessageRouter:
         """Check if a request ID is pending merge."""
         return request_id in self.pending_merges
 
-    async def add_response(self, request_id: int, server_name: str, response: dict) -> tuple[bool, Optional[dict], dict]:
+    async def add_response(self, request_id: int, server_name: str, response: JSON) -> tuple[bool, JSON | None, JSON]:
         """
         Add a server response to pending merge.
         Returns (is_complete, merged_response, metadata).
@@ -163,8 +163,8 @@ class DiagnosticAggregator:
         self,
         uri: str,
         server_name: str,
-        diagnostics: list,
-        callback
+        diagnostics: list[JSON],
+        callback: function
     ):
         """
         Add diagnostics from a server.

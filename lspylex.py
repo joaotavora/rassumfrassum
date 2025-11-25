@@ -11,22 +11,29 @@ from collections import deque  # pyright: ignore[reportUnusedImport]
 from dataclasses import dataclass
 
 from lsp_router import MessageRouter, DiagnosticAggregator
-from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message
-from utils import JSON
+from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message, JSON
+from typing import cast
 
 def log(s : str):
     print(f"[lspylex] {s}", file=sys.stderr)
-
 
 @dataclass
 class ServerProcess:
     """Information about a running server subprocess."""
     name: str
     process: asyncio.subprocess.Process
-    stdin: asyncio.StreamWriter
-    stdout: asyncio.StreamReader
-    stderr: asyncio.StreamReader
 
+    @property
+    def stdin(self) -> asyncio.StreamWriter:
+        return self.process.stdin  # pyright: ignore[reportReturnType]
+
+    @property
+    def stdout(self) -> asyncio.StreamReader:
+        return self.process.stdout  # pyright: ignore[reportReturnType]
+
+    @property
+    def stderr(self) -> asyncio.StreamReader:
+        return self.process.stderr  # pyright: ignore[reportReturnType]
 
 def log_message(direction: str, message: JSON) -> None:
     """
@@ -34,7 +41,7 @@ def log_message(direction: str, message: JSON) -> None:
     """
     # Determine message type
     if 'method' in message:
-        msg_type = message['method']
+        msg_type = cast(str, message['method'])
     elif 'result' in message or 'error' in message:
         msg_type = 'response'
     else:
@@ -51,6 +58,7 @@ async def forward_server_stderr(
     """
     Forward server's stderr to our stderr, prefixing each line with the server basename.
     """
+    assert server.stderr
     try:
         while True:
             line = await server.stderr.readline()
@@ -78,13 +86,9 @@ async def launch_server(server_command: list[str], server_index: int) -> ServerP
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-
     return ServerProcess(
         name=name,
-        process=process,
-        stdin=process.stdin,
-        stdout=process.stdout,
-        stderr=process.stderr
+        process=process
     )
 
 
@@ -98,7 +102,7 @@ async def run_multiplexer(
     Handles one or more LSP servers with intelligent message routing.
     """
     # Launch all servers
-    servers = []
+    servers : list[ServerProcess] = []
     for i, cmd in enumerate(server_commands):
         server = await launch_server(cmd, i)
         servers.append(server)
@@ -120,7 +124,7 @@ async def run_multiplexer(
 
     client_reader = asyncio.StreamReader()
     client_protocol = asyncio.StreamReaderProtocol(client_reader)
-    await loop.connect_read_pipe(lambda: client_protocol, sys.stdin)
+    _ = await loop.connect_read_pipe(lambda: client_protocol, sys.stdin)
 
     client_writer_transport, client_writer_protocol = await loop.connect_write_pipe(
         asyncio.streams.FlowControlMixin, sys.stdout
@@ -129,7 +133,7 @@ async def run_multiplexer(
         client_writer_transport, client_writer_protocol, None, loop
     )
 
-    async def send_diagnostic_to_client(uri: str, diagnostics: list):
+    async def send_diagnostic_to_client(uri: str, diagnostics: list[JSON]):
         """Callback for sending merged diagnostics to client."""
         notification = {
             'jsonrpc': '2.0',
@@ -161,8 +165,8 @@ async def run_multiplexer(
                         await write_lsp_message(server.stdin, msg)
                 else:
                     # Request - check if it should go to all servers
-                    method = msg.get('method')
-                    client_id = msg.get('id')
+                    method = cast(str, msg.get('method'))
+                    client_id = cast(int, msg.get('id'))
 
                     if router.should_route_to_all(method):
                         # Send to all servers with original ID
@@ -197,14 +201,15 @@ async def run_multiplexer(
 
                 # Check if response is part of a pending merge
                 msg_id = msg.get('id')
-                if msg_id is not None and 'result' in msg and router.is_pending_merge(msg_id):
+                if msg_id is not None and 'result' in msg and router.is_pending_merge(cast(int, msg_id)):
                     # Add response to router
-                    is_complete, merged, metadata = await router.add_response(msg_id, server.name, msg)
+                    is_complete, merged, metadata = await router.add_response(cast(int, msg_id), server.name, msg)
 
                     if is_complete:
-                        # Process metadata (e.g., serverInfo extraction)
+                        assert merged
+                        # FIXME!!! Completely out of place
                         if 'server_names' in metadata:
-                            for old_name, new_name in metadata['server_names'].items():
+                            for old_name, new_name in metadata['server_names'].items():  # pyright: ignore[reportAny]
                                 for s in servers:
                                     if s.name == old_name:
                                         s.name = new_name
@@ -219,13 +224,14 @@ async def run_multiplexer(
 
                 # Check for diagnostic notifications
                 if msg.get('method') == 'textDocument/publishDiagnostics':
-                    params = msg.get('params', {})
-                    uri = params.get('uri')
-                    diagnostics = params.get('diagnostics', [])
+                    params = cast(JSON, msg.get('params', {}))
+                    uri = cast(str, params.get('uri'))
+                    diagnostics = cast(list[JSON], params.get('diagnostics', []))
 
                     if uri:
+                        # FIXME callback ugly
                         await diagnostic_aggregator.add_diagnostic(
-                            uri, server.name, diagnostics, send_diagnostic_to_client
+                            uri, server.name, diagnostics, send_diagnostic_to_client  # pyright: ignore[reportArgumentType]
                         )
                     continue
 
@@ -250,11 +256,11 @@ async def run_multiplexer(
         if not quiet_server:
             tasks.append(forward_server_stderr(server))
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    _ = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Wait for all servers to exit
     for server in servers:
-        await server.process.wait()
+        _ = await server.process.wait()
 
 
 def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
@@ -272,13 +278,13 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
     lspylex_args = args[:separator_indices[0]]
 
     # Split server commands
-    server_commands = []
+    server_commands : list[list[str]] = []
     for i, sep_idx in enumerate(separator_indices):
         # Find start and end of this server command
         start = sep_idx + 1
         end = separator_indices[i + 1] if i + 1 < len(separator_indices) else len(args)
 
-        server_cmd = args[start:end]
+        server_cmd : list[str] = args[start:end]
         if server_cmd:  # Only add non-empty commands
             server_commands.append(server_cmd)
 

@@ -6,8 +6,9 @@ LSP uses HTTP-style headers: Content-Length: N\r\n\r\n{json}
 import json
 import asyncio
 import sys
-from typing import BinaryIO, cast
-from utils import JSON
+from typing import BinaryIO, cast, Any
+
+JSON = dict[str, Any]  # pyright: ignore[reportExplicitAny]
 
 async def read_message(reader: asyncio.StreamReader) -> JSON | None:
     """
