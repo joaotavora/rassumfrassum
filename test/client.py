@@ -2,15 +2,20 @@
 """
 A more complete test client that exercises various LSP messages.
 """
+
 import sys
+from pathlib import Path
+
+parent_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(parent_dir))
+
 from jsonrpc import read_message_sync, write_message_sync
+from utils import log, JSON
 
-
-def send_and_log(message, description):
+def send_and_log(message : JSON, description : str):
     """Send a message and log what we're doing."""
-    print(f"\n==> {description}", file=sys.stderr)
+    log("client", description)
     write_message_sync(message)
-
 
 def main():
     """Send a sequence of LSP messages."""
@@ -23,8 +28,8 @@ def main():
         'params': {}
     }, "Sending initialize")
 
-    response = read_message_sync()
-    print(f"<== Got initialize response", file=sys.stderr)
+    msg = read_message_sync()
+    log("client", f"Hopefully got initialize response {msg}")
 
     # 2. Initialized notification
     send_and_log({
@@ -33,7 +38,6 @@ def main():
         'params': {}
     }, "Sending initialized notification")
 
-    # 3. didOpen notification
     send_and_log({
         'jsonrpc': '2.0',
         'method': 'textDocument/didOpen',
@@ -47,6 +51,9 @@ def main():
         }
     }, "Sending didOpen notification")
 
+    msg = read_message_sync()
+    log("client", f"Hopefully got diagnostics {msg}")
+
     # 4. Hover request
     send_and_log({
         'jsonrpc': '2.0',
@@ -58,6 +65,9 @@ def main():
         }
     }, "Sending hover request")
 
+    msg = read_message_sync()
+    log("client", f"Hopefully got hover response {msg}")
+
     # 5. Shutdown
     send_and_log({
         'jsonrpc': '2.0',
@@ -66,8 +76,8 @@ def main():
         'params': {}
     }, "Sending shutdown")
 
-    response = read_message_sync()
-    print(f"<== Got shutdown response", file=sys.stderr)
+    msg = read_message_sync()
+    log("client", f"Hopefully got shutdown response {msg}")
 
     # 6. Exit notification
     send_and_log({
@@ -75,8 +85,7 @@ def main():
         'method': 'exit'
     }, "Sending exit notification")
 
-    print("\nDone!", file=sys.stderr)
-
+    log("client", "done!")
 
 if __name__ == '__main__':
     main()

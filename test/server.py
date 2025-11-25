@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """
-A configurable test LSP server for testing lspylex.
+A very silly dummy server for testing
 """
+
 import sys
-import argparse
+from pathlib import Path
+
+parent_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(parent_dir))
+
 from jsonrpc import read_message_sync, write_message_sync
+from utils import JSON
+import argparse
+from typing import cast
+
+def log(_prefix : str, s : str):
+    print(f"{s}", file=sys.stderr)
 
 # Realistic capability responses based on real LSP servers
 CAPABILITIES = {
@@ -49,7 +60,9 @@ def main():
                         help='Send diagnostics after didOpen')
     args = parser.parse_args()
 
-    print(f"Started!", file=sys.stderr, flush=True)
+    name = cast(str, args.name);
+
+    log(name, "Started!")
 
     while True:
         try:
@@ -61,15 +74,14 @@ def main():
             msg_id = message.get('id')
 
             if method == 'initialize':
-                # Return "realistic" initialize response
                 response = {
                     'jsonrpc': '2.0',
                     'id': msg_id,
                     'result': {
-                        'capabilities': CAPABILITIES[args.capabilities],
+                        'capabilities': CAPABILITIES[cast(str, args.capabilities)],
                         'serverInfo': {
-                            'name': args.name,
-                            'version': args.version
+                            'name': name,
+                            'version': cast(str, args.version)
                         }
                     }
                 }
@@ -83,16 +95,33 @@ def main():
                     'result': None
                 }
                 write_message_sync(response)
-                print(f"{args.name} shutting down", file=sys.stderr, flush=True)
+                log(name, "shutting down")
                 break
 
-            elif method == 'textDocument/didOpen' and args.publish_diagnostics:
-                # Handle didOpen and publish diagnostics
-                params = message.get('params', {})
-                text_doc = params.get('textDocument', {})
-                uri = text_doc.get('uri', 'file:///unknown')
+            elif method == 'textDocument/hover':
+                response = {
+                    'jsonrpc': '2.0',
+                    'id': msg_id,
+                    'result': {
+                        "contents": {
+                            "kind": "markdown",
+                            "value": "oh yeah "
+                        },
+                        "range": {
+                            "start": {"line": 0, "character": 5 },
+                            "end": {"line": 0, "character": 10 }
+                        }
+                    }
+                }
+                write_message_sync(response)
 
-                print(f"got notification {method}", file=sys.stderr, flush=True)
+            elif method == 'textDocument/didOpen' and cast(bool, args.publish_diagnostics):
+                # Handle didOpen and publish diagnostics
+                params = cast(JSON, message.get('params', {}))
+                text_doc = cast(JSON, params.get('textDocument', {}))
+                uri = cast(str, text_doc.get('uri', 'file:///unknown'))
+
+                log(name, f"got notification {method}")
 
                 # Publish diagnostics for this file
                 diagnostic_notification = {
@@ -107,7 +136,7 @@ def main():
                                     'end': {'line': 0, 'character': 5}
                                 },
                                 'severity': 1,  # Error
-                                'message': f'An example error from {args.name}'
+                                'message': f'An example error from {name}'
                             },
                             {
                                 'range': {
@@ -115,26 +144,26 @@ def main():
                                     'end': {'line': 0, 'character': 12}
                                 },
                                 'severity': 2,  # Warning
-                                'message': f'An example warning from {args.name}'
+                                'message': f'An example warning from {name}'
                             }
                         ]
                     }
                 }
                 write_message_sync(diagnostic_notification)
-                print(f"published diagnostics for {uri}", file=sys.stderr, flush=True)
+                log(name, f"published diagnostics for {uri}")
 
             else:
                 # Log all other requests and notifications
                 if msg_id is not None:
-                    print(f"request {method} (id={msg_id})", file=sys.stderr, flush=True)
+                    log(name, f"request {method} (id={msg_id})")
                 else:
-                    print(f"notification {method}", file=sys.stderr, flush=True)
+                    log(name, f"notification {method}")
 
         except Exception as e:
-            print(f"Error: {e}", file=sys.stderr, flush=True)
+            log(name, f"Error: {e}")
             break
 
-    print(f"stopped", file=sys.stderr, flush=True)
+    log(name, f"stopped")
 
 
 if __name__ == '__main__':
