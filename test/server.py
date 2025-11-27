@@ -59,7 +59,7 @@ def main():
                         help='Send diagnostics after didOpen')
     args = parser.parse_args()
 
-    name = cast(str, args.name);
+    name = cast(str, args.name)
 
     log(name, "Started!")
 
@@ -162,7 +162,7 @@ def main():
             log(name, f"Error: {e}")
             break
 
-    log(name, f"stopped")
+    log(name, "stopped")
 
 
 if __name__ == '__main__':

@@ -7,7 +7,6 @@ import json
 import asyncio
 import sys
 import os
-from collections import deque  # pyright: ignore[reportUnusedImport]
 from dataclasses import dataclass
 
 from lsp_router import MessageRouter, DiagnosticAggregator
