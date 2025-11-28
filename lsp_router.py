@@ -51,20 +51,127 @@ class MessageRouter:
 
     def should_aggregate(self, msg: JSON) -> bool:
         """
-        Check if this message needs aggregation from multiple servers.
-        Works for both responses and notifications.
+        Check if this message (notification) needs aggregation from multiple servers.
+        For responses, aggregation is tracked by lspylex when the request is sent out.
         """
-        # Responses: check if it's a pending merge
-        msg_id = msg.get('id')
-        if msg_id is not None and 'result' in msg:
-            return msg_id in self.pending_aggregations
-
-        # Notifications: check method
         method = msg.get('method')
+
+        # Notifications that need aggregation
         if method:
             return method == 'textDocument/publishDiagnostics'
 
         return False
+
+    def get_aggregation_key(self, msg: JSON):
+        """
+        Get a unique key identifying this aggregation session.
+        """
+        msg_id = msg.get('id')
+        if msg_id is not None:
+            # Response: use ID as key
+            return ('response', msg_id)
+
+        method = msg.get('method')
+        if method == 'textDocument/publishDiagnostics':
+            # Notification: use method + URI
+            params = msg.get('params', {})
+            uri = params.get('uri', '')
+            return ('notification', method, uri)
+
+        return None
+
+    def get_aggregation_timeout_ms(self, msg: JSON) -> int:
+        """
+        Get timeout in milliseconds for this aggregation.
+        """
+        method = msg.get('method')
+        if method == 'textDocument/publishDiagnostics':
+            return 1000  # 1 second for diagnostics
+
+        # Responses to requests
+        if msg.get('id') is not None:
+            return 5000  # 5 seconds for responses
+
+        return 1000  # Default
+
+    async def aggregate_messages(self, current_aggregate: JSON | None, new_msg: JSON, source) -> JSON:
+        """
+        Aggregate a new message with the current aggregate.
+        source is the server that sent new_msg.
+        Returns the new aggregate.
+        """
+        if current_aggregate is None:
+            # First message - start with this one
+            method = new_msg.get('method')
+            msg_id = new_msg.get('id')
+
+            if method == 'textDocument/publishDiagnostics':
+                # For diagnostics, start with empty list and add source
+                result = new_msg.copy()
+                params = result.get('params', {}).copy()
+                diags = params.get('diagnostics', [])
+                # Add source to each diagnostic
+                for diag in diags:
+                    if 'source' not in diag:
+                        diag['source'] = source.name
+                params['diagnostics'] = diags
+                result['params'] = params
+                return result
+            elif msg_id is not None and 'result' in new_msg:
+                # Response - depends on method that was called
+                # For now just return it
+                return new_msg.copy()
+            else:
+                return new_msg.copy()
+        else:
+            # Merge with existing aggregate
+            method = new_msg.get('method')
+
+            if method == 'textDocument/publishDiagnostics':
+                # Merge diagnostics
+                result = current_aggregate.copy()
+                current_diags = result.get('params', {}).get('diagnostics', [])
+
+                new_params = new_msg.get('params', {})
+                new_diags = new_params.get('diagnostics', [])
+
+                # Add source to new diagnostics
+                for diag in new_diags:
+                    if 'source' not in diag:
+                        diag['source'] = source.name
+
+                # Combine diagnostics
+                all_diags = current_diags + new_diags
+                result['params']['diagnostics'] = all_diags
+                return result
+            elif 'result' in new_msg:
+                # Merge responses based on what method was called
+                # For initialize, merge capabilities
+                current_result = current_aggregate.get('result')
+                if isinstance(current_result, dict) and 'capabilities' in current_result:
+                    return await self._merge_initialize(current_aggregate, new_msg, source)
+                else:
+                    # For other responses (like shutdown), just return current
+                    return current_aggregate
+
+            return current_aggregate
+
+    async def _merge_initialize(self, current: JSON, new: JSON, source) -> JSON:
+        """Merge initialize responses."""
+        result = current.copy()
+        current_caps = result.get('result', {}).get('capabilities', {})
+        new_caps = new.get('result', {}).get('capabilities', {})
+
+        # Merge capabilities
+        for key, value in new_caps.items():
+            if key not in current_caps:
+                current_caps[key] = value
+            elif isinstance(value, dict) and isinstance(current_caps[key], dict):
+                current_caps[key] = {**current_caps[key], **value}
+            elif isinstance(value, list) and isinstance(current_caps[key], list):
+                current_caps[key] = list(set(current_caps[key] + value))
+
+        return result
 
     async def aggregate_message(self, server, msg: JSON) -> tuple[bool, JSON | None]:
         """

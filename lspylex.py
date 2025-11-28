@@ -110,6 +110,13 @@ async def run_multiplexer(
     server_names = [s.name for s in servers]
     router = MessageRouter(server_names)
 
+    # Track ongoing aggregations
+    # key -> {expected_count, received_count, current_aggregate, timeout_task}
+    pending_aggregations = {}
+
+    # Track which request IDs need aggregation (were sent to all servers)
+    requests_needing_aggregation = set()
+
     print(f"[lspylex] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
     if len(servers) > 1:
         secondaries = [s.name for s in servers[1:]]
@@ -171,8 +178,8 @@ async def run_multiplexer(
                             await write_lsp_message(server.stdin, msg)
                             log_message(f'[{server.name}] -->', msg)
 
-                        # Track for merging
-                        router.track_merge_request(client_id, method, len(servers))
+                        # Track that this request needs aggregation
+                        requests_needing_aggregation.add(client_id)
                     else:
                         # Send only to primary server with original ID
                         await write_lsp_message(servers[0].stdin, msg)
@@ -185,6 +192,14 @@ async def run_multiplexer(
             for server in servers:
                 server.stdin.close()
                 await server.stdin.wait_closed()
+
+    async def handle_aggregation_timeout(agg_key):
+        """Handle timeout for an aggregation - send whatever we have."""
+        if agg_key in pending_aggregations:
+            agg_state = pending_aggregations[agg_key]
+            if agg_state['current_aggregate']:
+                await send_to_client(agg_state['current_aggregate'])
+            del pending_aggregations[agg_key]
 
     async def handle_server_messages(server: ServerProcess):
         """Read from a server and route back to client."""
@@ -200,14 +215,56 @@ async def run_multiplexer(
                 router.on_server_message(server, msg)
 
                 # Check if message needs aggregation
-                if router.should_aggregate(msg):
-                    is_complete, aggregated = await router.aggregate_message(server, msg)
-                    if is_complete:
-                        assert aggregated
-                        # Restore ID for responses
-                        if 'id' in msg:
-                            aggregated['id'] = msg.get('id')
-                        await send_to_client(aggregated)
+                needs_aggregation = False
+                msg_id = msg.get('id')
+                if msg_id is not None and msg_id in requests_needing_aggregation:
+                    # This is a response to a request that was sent to all servers
+                    needs_aggregation = True
+                elif router.should_aggregate(msg):
+                    # This is a notification that needs aggregation
+                    needs_aggregation = True
+
+                if needs_aggregation:
+                    # Get aggregation key
+                    agg_key = router.get_aggregation_key(msg)
+
+                    # Create aggregation state if this is the first message
+                    if agg_key not in pending_aggregations:
+                        timeout_ms = router.get_aggregation_timeout_ms(msg)
+                        pending_aggregations[agg_key] = {
+                            'expected_count': len(servers),
+                            'received_count': 0,
+                            'current_aggregate': None,
+                            'timeout_task': asyncio.create_task(
+                                asyncio.sleep(timeout_ms / 1000.0)
+                            )
+                        }
+                        # Setup timeout handler
+                        async def timeout_handler():
+                            await pending_aggregations[agg_key]['timeout_task']
+                            await handle_aggregation_timeout(agg_key)
+                        asyncio.create_task(timeout_handler())
+
+                    agg_state = pending_aggregations[agg_key]
+
+                    # Aggregate this message with current aggregate
+                    agg_state['current_aggregate'] = await router.aggregate_messages(
+                        agg_state['current_aggregate'],
+                        msg,
+                        server
+                    )
+                    agg_state['received_count'] += 1
+
+                    # Check if all messages received
+                    if agg_state['received_count'] == agg_state['expected_count']:
+                        # Cancel timeout
+                        agg_state['timeout_task'].cancel()
+                        # Send aggregated result to client
+                        await send_to_client(agg_state['current_aggregate'])
+                        del pending_aggregations[agg_key]
+                        # Remove from requests needing aggregation if it's a response
+                        if msg_id is not None:
+                            requests_needing_aggregation.discard(msg_id)
                 else:
                     # Forward immediately to client
                     await send_to_client(msg)
