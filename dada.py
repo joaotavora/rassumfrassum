@@ -104,6 +104,9 @@ async def run_multiplexer(
     server_request_mapping = {}
     next_remapped_id = 0
 
+    # Track shutdown state
+    shutting_down = False
+
     print(f"[dada] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
     if len(servers) > 1:
         secondaries = [s.name for s in servers[1:]]
@@ -141,6 +144,7 @@ async def run_multiplexer(
 
     async def handle_client_messages():
         """Read from client and route to appropriate servers."""
+        nonlocal shutting_down
         try:
             while True:
                 msg = await read_lsp_message(client_reader)
@@ -151,6 +155,10 @@ async def run_multiplexer(
 
                 method = msg.get('method')
                 id = msg.get('id')
+
+                # Track shutdown requests
+                if method == 'shutdown':
+                    shutting_down = True
 
                 # Route based on message type
                 if id is None and method is not None:  # notification
@@ -232,6 +240,10 @@ async def run_multiplexer(
             while True:
                 msg = await read_lsp_message(server.stdout)
                 if msg is None:
+                    # Server died - check if this was expected
+                    if not shutting_down:
+                        log(f"Error: Server {server.name} died unexpectedly")
+                        raise RuntimeError(f"Server {server.name} crashed")
                     break
 
                 log_message(f'[{server.name}] <--', msg)
@@ -324,6 +336,9 @@ async def run_multiplexer(
                     # Forward immediately to client
                     await send_to_client(msg)
 
+        except RuntimeError:
+            # Server crashed - re-raise to propagate to main
+            raise
         except Exception as e:
             print(f"[dada] Error handling messages from {server.name}: {e}", file=sys.stderr, flush=True)
         finally:
@@ -339,7 +354,12 @@ async def run_multiplexer(
         if not quiet_server:
             tasks.append(forward_server_stderr(server))
 
-    await asyncio.gather(*tasks)
+    try:
+        await asyncio.gather(*tasks)
+    except RuntimeError as e:
+        # Server crashed unexpectedly
+        log(f"Fatal error: {e}")
+        sys.exit(1)
 
     # Wait for all servers to exit
     for server in servers:

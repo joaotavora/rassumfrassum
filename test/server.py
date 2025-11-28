@@ -62,6 +62,8 @@ def main():
                         help='Delay in milliseconds before publishing diagnostics')
     _ = parser.add_argument('--send-request-after-init', action='store_true',
                         help='Send a request to client after initialization')
+    _ = parser.add_argument('--crash-after-init', action='store_true',
+                        help='Crash immediately after initialized notification')
     args = parser.parse_args()
 
     name = cast(str, args.name)
@@ -161,21 +163,28 @@ def main():
                 write_message_sync(diagnostic_notification)
                 log(name, f"published diagnostics for {uri}")
 
-            elif method == 'initialized' and cast(bool, args.send_request_after_init):
-                # Send a request to the client after initialized notification
+            elif method == 'initialized':
                 log(name, f"got notification {method}")
-                request_to_client = {
-                    'jsonrpc': '2.0',
-                    'id': 999,  # Server's request ID
-                    'method': 'workspace/configuration',
-                    'params': {
-                        'items': [
-                            {'section': 'python'}
-                        ]
+
+                # Crash if requested
+                if cast(bool, args.crash_after_init):
+                    log(name, "Crashing as requested")
+                    sys.exit(42)
+
+                # Send a request to the client if requested
+                if cast(bool, args.send_request_after_init):
+                    request_to_client = {
+                        'jsonrpc': '2.0',
+                        'id': 999,  # Server's request ID
+                        'method': 'workspace/configuration',
+                        'params': {
+                            'items': [
+                                {'section': 'python'}
+                            ]
+                        }
                     }
-                }
-                log(name, "Sending request to client: workspace/configuration")
-                write_message_sync(request_to_client)
+                    log(name, "Sending request to client: workspace/configuration")
+                    write_message_sync(request_to_client)
 
             elif msg_id == 999 and method is None:
                 # This is a response to our workspace/configuration request
