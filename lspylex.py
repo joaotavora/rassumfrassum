@@ -9,7 +9,7 @@ import sys
 import os
 from dataclasses import dataclass
 
-from lsp_router import MessageRouter, DiagnosticAggregator
+from lsp_router import MessageRouter
 from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message, JSON
 from typing import cast
 
@@ -109,7 +109,6 @@ async def run_multiplexer(
     # Create message router
     server_names = [s.name for s in servers]
     router = MessageRouter(server_names)
-    diagnostic_aggregator = DiagnosticAggregator(timeout_ms=1000)
 
     print(f"[lspylex] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
     if len(servers) > 1:
@@ -145,18 +144,6 @@ async def run_multiplexer(
         else:
             log_message('<--', message)
             await write_lsp_message(client_writer, message)
-
-    async def send_diagnostic_to_client(uri: str, diagnostics: list[JSON]):
-        """Callback for sending merged diagnostics to client."""
-        notification = {
-            'jsonrpc': '2.0',
-            'method': 'textDocument/publishDiagnostics',
-            'params': {
-                'uri': uri,
-                'diagnostics': diagnostics
-            }
-        }
-        await send_to_client(notification)
 
     async def handle_client_messages():
         """Read from client and route to appropriate servers."""
@@ -209,42 +196,21 @@ async def run_multiplexer(
 
                 log_message(f'[{server.name}] <--', msg)
 
-                # Check if response is part of a pending merge
-                msg_id = msg.get('id')
-                if msg_id is not None and 'result' in msg and router.is_pending_merge(cast(int, msg_id)):
-                    # Add response to router
-                    is_complete, merged, metadata = await router.add_response(cast(int, msg_id), server.name, msg)
+                # Immediate handling (e.g., server name discovery)
+                router.on_server_message(server, msg)
 
+                # Check if message needs aggregation
+                if router.should_aggregate(msg):
+                    is_complete, aggregated = await router.aggregate_message(server.name, msg)
                     if is_complete:
-                        assert merged
-                        # FIXME!!! Completely out of place
-                        if 'server_names' in metadata:
-                            for old_name, new_name in metadata['server_names'].items():  # pyright: ignore[reportAny]
-                                for s in servers:
-                                    if s.name == old_name:
-                                        s.name = new_name
-                                        print(f"[lspylex] Server identified as: {new_name}", file=sys.stderr, flush=True)
-
-                        # Send merged response to client
-                        merged['id'] = msg_id
-                        await send_to_client(merged)
-                    continue
-
-                # Check for diagnostic notifications
-                if msg.get('method') == 'textDocument/publishDiagnostics':
-                    params = cast(JSON, msg.get('params', {}))
-                    uri = cast(str, params.get('uri'))
-                    diagnostics = cast(list[JSON], params.get('diagnostics', []))
-
-                    if uri:
-                        # FIXME callback ugly
-                        await diagnostic_aggregator.add_diagnostic(
-                            uri, server.name, diagnostics, send_diagnostic_to_client  # pyright: ignore[reportArgumentType]
-                        )
-                    continue
-
-                # Forward everything else to client with original ID
-                await send_to_client(msg)
+                        assert aggregated
+                        # Restore ID for responses
+                        if 'id' in msg:
+                            aggregated['id'] = msg.get('id')
+                        await send_to_client(aggregated)
+                else:
+                    # Forward immediately to client
+                    await send_to_client(msg)
 
         except Exception as e:
             print(f"[lspylex] Error handling messages from {server.name}: {e}", file=sys.stderr, flush=True)

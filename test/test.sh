@@ -14,5 +14,5 @@ mkfifo "$FIFO"
 # Cleanup on exit
 trap "rm -f '$FIFO'" EXIT INT TERM
 
-# Run test
-"$CLIENT" < "$FIFO" | "$LSPYLEX" -- python "$SERVER" --name s1 --publish-diagnostics > "$FIFO"
+# Run test with 2 servers
+"$CLIENT" < "$FIFO" | "$LSPYLEX" -- python "$SERVER" --name s1 --publish-diagnostics -- python "$SERVER" --name s2 --publish-diagnostics > "$FIFO"
