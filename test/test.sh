@@ -1,5 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 set -e
+set -o pipefail
 
 # Get script's directory and derive paths relative to it
 SCRIPT_DIR=$(dirname "$0")

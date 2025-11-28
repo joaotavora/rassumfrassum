@@ -31,7 +31,10 @@ def main():
     }, "Sending initialize")
 
     msg = read_message_sync()
-    log("client", f"Hopefully got initialize response {msg}")
+    assert msg is not None, "Expected initialize response"
+    assert 'result' in msg, f"Expected 'result' in initialize response: {msg}"
+    assert 'capabilities' in msg['result'], f"Expected 'capabilities' in initialize result: {msg}"
+    log("client", f"Got initialize response {msg}")
 
     # 2. Initialized notification
     send_and_log({
@@ -54,7 +57,10 @@ def main():
     }, "Sending didOpen notification")
 
     msg = read_message_sync()
-    log("client", f"Hopefully got diagnostics {msg}")
+    assert msg is not None, "Expected publishDiagnostics notification"
+    assert msg.get('method') == 'textDocument/publishDiagnostics', f"Expected publishDiagnostics, got: {msg}"
+    assert 'params' in msg, f"Expected 'params' in diagnostics: {msg}"
+    log("client", f"Got diagnostics {msg}")
 
     # 4. Hover request
     send_and_log({
@@ -68,7 +74,10 @@ def main():
     }, "Sending hover request")
 
     msg = read_message_sync()
-    log("client", f"Hopefully got hover response {msg}")
+    assert msg is not None, "Expected hover response"
+    assert 'id' in msg and msg['id'] == 2, f"Expected response with id=2: {msg}"
+    assert 'result' in msg or 'error' in msg, f"Expected 'result' or 'error' in hover response: {msg}"
+    log("client", f"Got hover response {msg}")
 
     # 5. Shutdown
     send_and_log({
@@ -79,7 +88,10 @@ def main():
     }, "Sending shutdown")
 
     msg = read_message_sync()
-    log("client", f"Hopefully got shutdown response {msg}")
+    assert msg is not None, "Expected shutdown response"
+    assert 'id' in msg and msg['id'] == 3, f"Expected response with id=3: {msg}"
+    assert 'result' in msg, f"Expected 'result' in shutdown response: {msg}"
+    log("client", f"Got shutdown response {msg}")
 
     # 6. Exit notification
     send_and_log({

@@ -231,18 +231,21 @@ async def run_multiplexer(
                     # Create aggregation state if this is the first message
                     if agg_key not in pending_aggregations:
                         timeout_ms = router.get_aggregation_timeout_ms(msg)
+                        timeout_task = asyncio.create_task(
+                            asyncio.sleep(timeout_ms / 1000.0)
+                        )
                         pending_aggregations[agg_key] = {
                             'expected_count': len(servers),
                             'received_count': 0,
                             'current_aggregate': None,
-                            'timeout_task': asyncio.create_task(
-                                asyncio.sleep(timeout_ms / 1000.0)
-                            )
+                            'timeout_task': timeout_task
                         }
                         # Setup timeout handler
                         async def timeout_handler():
-                            await pending_aggregations[agg_key]['timeout_task']
-                            await handle_aggregation_timeout(agg_key)
+                            await timeout_task
+                            # Check if aggregation still pending (might have completed early)
+                            if agg_key in pending_aggregations:
+                                await handle_aggregation_timeout(agg_key)
                         asyncio.create_task(timeout_handler())
 
                     agg_state = pending_aggregations[agg_key]
@@ -284,7 +287,7 @@ async def run_multiplexer(
         if not quiet_server:
             tasks.append(forward_server_stderr(server))
 
-    _ = await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.gather(*tasks)
 
     # Wait for all servers to exit
     for server in servers:
