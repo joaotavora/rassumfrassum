@@ -222,45 +222,24 @@ async def run_multiplexer(
                     method = requests_needing_aggregation.get(msg_id)
 
                 # Immediate handling (e.g., server name discovery, source attribution)
-                payload = router.on_server_message(method, payload, server)
+                payload = router.on_server_message(method, cast(JSON, payload), server)
 
                 # Check if message needs aggregation
                 needs_aggregation = False
+                agg_key = None
                 if msg_id is not None and msg_id in requests_needing_aggregation:
                     # This is a response to a request that was sent to all servers
                     needs_aggregation = True
-                elif router.should_aggregate(msg):
+                    agg_key = ('response', msg_id)
+                elif router.should_aggregate(method):
                     # This is a notification that needs aggregation
                     needs_aggregation = True
+                    agg_key = router.get_aggregation_key(method, payload)
 
                 if needs_aggregation:
-                    # Get aggregation key
-                    agg_key = router.get_aggregation_key(msg)
-
-                    # Create aggregation state if this is the first message
-                    if agg_key not in pending_aggregations:
-                        timeout_ms = router.get_aggregation_timeout_ms(msg)
-                        timeout_task = asyncio.create_task(
-                            asyncio.sleep(timeout_ms / 1000.0)
-                        )
-                        pending_aggregations[agg_key] = {
-                            'expected_count': len(servers),
-                            'received_count': 1,
-                            'id': msg_id,
-                            'method': method,
-                            'aggregate_payload': payload,
-                            'timeout_task': timeout_task
-                        }
-                        # Setup timeout handler
-                        async def timeout_handler():
-                            await timeout_task
-                            # Check if aggregation still pending (might have completed early)
-                            if agg_key in pending_aggregations:
-                                await handle_aggregation_timeout(agg_key)
-                        asyncio.create_task(timeout_handler())
-                    else:
+                    agg_state = pending_aggregations.get(agg_key)
+                    if agg_state:
                         # Not the first message - aggregate with previous
-                        agg_state = pending_aggregations[agg_key]
                         agg_state['aggregate_payload'] = await router.aggregate_payloads(
                             agg_state['method'],
                             agg_state['aggregate_payload'],
@@ -268,8 +247,26 @@ async def run_multiplexer(
                             server
                         )
                         agg_state['received_count'] += 1
-
-                    agg_state = pending_aggregations[agg_key]
+                    else:
+                        timeout_task = asyncio.create_task(
+                            asyncio.sleep(router.get_aggregation_timeout_ms(method) / 1000.0)
+                        )
+                        agg_state = {
+                            'expected_count': len(servers),
+                            'received_count': 1,
+                            'id': msg_id,
+                            'method': method,
+                            'aggregate_payload': payload,
+                            'timeout_task': timeout_task
+                        }
+                        pending_aggregations[agg_key] = agg_state;
+                        # Setup timeout handler
+                        async def timeout_handler():
+                            await timeout_task
+                            # Check if aggregation still pending (might have completed early)
+                            if agg_key in pending_aggregations:
+                                await handle_aggregation_timeout(agg_key)
+                        asyncio.create_task(timeout_handler())
 
                     # Check if all messages received
                     if agg_state['received_count'] == agg_state['expected_count']:
