@@ -6,8 +6,8 @@ A more complete test client that exercises various LSP messages.
 import sys
 from pathlib import Path
 
-parent_dir = Path(__file__).parent.parent
-sys.path.insert(0, str(parent_dir))
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root))
 
 from jsonrpc import read_message_sync, write_message_sync, JSON
 

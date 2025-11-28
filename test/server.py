@@ -6,8 +6,8 @@ A very silly dummy server for testing
 import sys
 from pathlib import Path
 
-parent_dir = Path(__file__).parent.parent
-sys.path.insert(0, str(parent_dir))
+project_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_dir))
 
 from jsonrpc import read_message_sync, write_message_sync, JSON
 import argparse

@@ -4,9 +4,9 @@ set -o pipefail
 
 # Get script's directory and derive paths relative to it
 SCRIPT_DIR=$(dirname "$0")
-LSPYLEX="$SCRIPT_DIR/../lspylex.py"
+LSPYLEX="$SCRIPT_DIR/../../lspylex.py"
 CLIENT="$SCRIPT_DIR/client.py"
-SERVER="$SCRIPT_DIR/server.py"
+SERVER="$SCRIPT_DIR/../server.py"
 
 # Create temporary fifo
 FIFO=$(mktemp -u)
