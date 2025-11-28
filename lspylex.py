@@ -7,32 +7,14 @@ import json
 import asyncio
 import sys
 import os
-from dataclasses import dataclass
 
 from lsp_router import MessageRouter
 from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message, JSON
+from server_process import ServerProcess
 from typing import cast
 
 def log(s : str):
     print(f"[lspylex] {s}", file=sys.stderr)
-
-@dataclass
-class ServerProcess:
-    """Information about a running server subprocess."""
-    name: str
-    process: asyncio.subprocess.Process
-
-    @property
-    def stdin(self) -> asyncio.StreamWriter:
-        return self.process.stdin  # pyright: ignore[reportReturnType]
-
-    @property
-    def stdout(self) -> asyncio.StreamReader:
-        return self.process.stdout  # pyright: ignore[reportReturnType]
-
-    @property
-    def stderr(self) -> asyncio.StreamReader:
-        return self.process.stderr  # pyright: ignore[reportReturnType]
 
 def log_message(direction: str, message: JSON) -> None:
     """
@@ -111,11 +93,11 @@ async def run_multiplexer(
     router = MessageRouter(server_names)
 
     # Track ongoing aggregations
-    # key -> {expected_count, received_count, current_aggregate, timeout_task}
+    # key -> {expected_count, received_count, id, method, aggregate_payload, timeout_task}
     pending_aggregations = {}
 
-    # Track which request IDs need aggregation (were sent to all servers)
-    requests_needing_aggregation = set()
+    # Track which request IDs need aggregation: id -> method
+    requests_needing_aggregation = {}
 
     print(f"[lspylex] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
     if len(servers) > 1:
@@ -179,7 +161,7 @@ async def run_multiplexer(
                             log_message(f'[{server.name}] -->', msg)
 
                         # Track that this request needs aggregation
-                        requests_needing_aggregation.add(client_id)
+                        requests_needing_aggregation[client_id] = method
                     else:
                         # Send only to primary server with original ID
                         await write_lsp_message(servers[0].stdin, msg)
@@ -197,8 +179,23 @@ async def run_multiplexer(
         """Handle timeout for an aggregation - send whatever we have."""
         if agg_key in pending_aggregations:
             agg_state = pending_aggregations[agg_key]
-            if agg_state['current_aggregate']:
-                await send_to_client(agg_state['current_aggregate'])
+            if agg_state['aggregate_payload'] is not None:
+                # Reconstruct full JSONRPC message
+                if agg_state['id'] is not None:
+                    # Response
+                    final_msg = {
+                        'jsonrpc': '2.0',
+                        'id': agg_state['id'],
+                        'result': agg_state['aggregate_payload']
+                    }
+                else:
+                    # Notification
+                    final_msg = {
+                        'jsonrpc': '2.0',
+                        'method': agg_state['method'],
+                        'params': agg_state['aggregate_payload']
+                    }
+                await send_to_client(final_msg)
             del pending_aggregations[agg_key]
 
     async def handle_server_messages(server: ServerProcess):
@@ -211,12 +208,22 @@ async def run_multiplexer(
 
                 log_message(f'[{server.name}] <--', msg)
 
-                # Immediate handling (e.g., server name discovery)
-                router.on_server_message(server, msg)
+                # Extract method and payload from message
+                msg_id = msg.get('id')
+                method = msg.get('method')
+                if method is not None:
+                    # Notification - payload is params
+                    payload = msg.get('params', {})
+                else:
+                    # Response - payload is result, lookup method from request tracking
+                    payload = msg.get('result')
+                    method = requests_needing_aggregation.get(msg_id)
+
+                # Immediate handling (e.g., server name discovery, source attribution)
+                payload = router.on_server_message(method, payload, server)
 
                 # Check if message needs aggregation
                 needs_aggregation = False
-                msg_id = msg.get('id')
                 if msg_id is not None and msg_id in requests_needing_aggregation:
                     # This is a response to a request that was sent to all servers
                     needs_aggregation = True
@@ -236,8 +243,10 @@ async def run_multiplexer(
                         )
                         pending_aggregations[agg_key] = {
                             'expected_count': len(servers),
-                            'received_count': 0,
-                            'current_aggregate': None,
+                            'received_count': 1,
+                            'id': msg_id,
+                            'method': method,
+                            'aggregate_payload': payload,
                             'timeout_task': timeout_task
                         }
                         # Setup timeout handler
@@ -247,27 +256,44 @@ async def run_multiplexer(
                             if agg_key in pending_aggregations:
                                 await handle_aggregation_timeout(agg_key)
                         asyncio.create_task(timeout_handler())
+                    else:
+                        # Not the first message - aggregate with previous
+                        agg_state = pending_aggregations[agg_key]
+                        agg_state['aggregate_payload'] = await router.aggregate_payloads(
+                            agg_state['method'],
+                            agg_state['aggregate_payload'],
+                            payload,
+                            server
+                        )
+                        agg_state['received_count'] += 1
 
                     agg_state = pending_aggregations[agg_key]
-
-                    # Aggregate this message with current aggregate
-                    agg_state['current_aggregate'] = await router.aggregate_messages(
-                        agg_state['current_aggregate'],
-                        msg,
-                        server
-                    )
-                    agg_state['received_count'] += 1
 
                     # Check if all messages received
                     if agg_state['received_count'] == agg_state['expected_count']:
                         # Cancel timeout
                         agg_state['timeout_task'].cancel()
+                        # Reconstruct full JSONRPC message
+                        if agg_state['id'] is not None:
+                            # Response
+                            final_msg = {
+                                'jsonrpc': '2.0',
+                                'id': agg_state['id'],
+                                'result': agg_state['aggregate_payload']
+                            }
+                        else:
+                            # Notification
+                            final_msg = {
+                                'jsonrpc': '2.0',
+                                'method': agg_state['method'],
+                                'params': agg_state['aggregate_payload']
+                            }
                         # Send aggregated result to client
-                        await send_to_client(agg_state['current_aggregate'])
+                        await send_to_client(final_msg)
                         del pending_aggregations[agg_key]
                         # Remove from requests needing aggregation if it's a response
                         if msg_id is not None:
-                            requests_needing_aggregation.discard(msg_id)
+                            requests_needing_aggregation.pop(msg_id, None)
                 else:
                     # Forward immediately to client
                     await send_to_client(msg)

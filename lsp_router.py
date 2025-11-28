@@ -5,6 +5,7 @@ LSP-specific message routing and merging logic.
 import asyncio
 from typing import Any
 from jsonrpc import JSON
+from server_process import ServerProcess
 
 class MessageRouter:
     """
@@ -36,18 +37,30 @@ class MessageRouter:
         """Check if message is a notification (no 'id' field)."""
         return 'id' not in msg
 
-    def on_server_message(self, server, msg: JSON) -> None:
+    def on_server_message(
+        self,
+        method: str | None,
+        payload: JSON,
+        source: ServerProcess
+    ) -> JSON:
         """
-        Handle immediate processing of server message.
-        Can perform side effects like updating server.name.
+        Handle immediate processing of server message payload.
+        Can perform side effects like updating source.name.
+        Returns the (potentially modified) payload.
         """
         # Extract server name from initialize response
-        if 'result' in msg:
-            result = msg.get('result')
-            if isinstance(result, dict):
-                server_info = result.get('serverInfo', {})
-                if 'name' in server_info:
-                    server.name = server_info['name']
+        if method == 'initialize' and 'name' in payload.get('serverInfo', {}):
+            source.name = payload['serverInfo']['name']
+
+        # Add source attribution to diagnostics
+        if method == 'textDocument/publishDiagnostics':
+            result = payload.copy()
+            for diag in result.get('diagnostics', []):
+                if 'source' not in diag:
+                    diag['source'] = source.name
+            return result
+
+        return payload
 
     def should_aggregate(self, msg: JSON) -> bool:
         """
@@ -94,73 +107,51 @@ class MessageRouter:
 
         return 1000  # Default
 
-    async def aggregate_messages(self, current_aggregate: JSON | None, new_msg: JSON, source) -> JSON:
+    async def aggregate_payloads(
+        self,
+        method: str,
+        aggregate: JSON,
+        payload: JSON,
+        source: ServerProcess
+    ) -> JSON:
         """
-        Aggregate a new message with the current aggregate.
-        source is the server that sent new_msg.
-        Returns the new aggregate.
+        Aggregate a new payload with the current aggregate.
+        Returns the new aggregate payload.
         """
-        if current_aggregate is None:
-            # First message - start with this one
-            method = new_msg.get('method')
-            msg_id = new_msg.get('id')
+        if method == 'textDocument/publishDiagnostics':
+            # Merge diagnostics
+            current_diags = aggregate.get('diagnostics', [])
+            new_diags = payload.get('diagnostics', [])
 
-            if method == 'textDocument/publishDiagnostics':
-                # For diagnostics, start with empty list and add source
-                result = new_msg.copy()
-                params = result.get('params', {}).copy()
-                diags = params.get('diagnostics', [])
-                # Add source to each diagnostic
-                for diag in diags:
-                    if 'source' not in diag:
-                        diag['source'] = source.name
-                params['diagnostics'] = diags
-                result['params'] = params
-                return result
-            elif msg_id is not None and 'result' in new_msg:
-                # Response - depends on method that was called
-                # For now just return it
-                return new_msg.copy()
-            else:
-                return new_msg.copy()
+            # Add source to new diagnostics
+            for diag in new_diags:
+                if 'source' not in diag:
+                    diag['source'] = source.name
+
+            # Combine diagnostics
+            result = aggregate.copy()
+            result['diagnostics'] = current_diags + new_diags
+            return result
+        elif method == 'initialize':
+            # Merge capabilities
+            return await self._merge_initialize_payloads(aggregate, payload, source)
+        elif method == 'shutdown':
+            # Shutdown returns null, just return current aggregate
+            return aggregate
         else:
-            # Merge with existing aggregate
-            method = new_msg.get('method')
+            # Default: return current aggregate
+            return aggregate
 
-            if method == 'textDocument/publishDiagnostics':
-                # Merge diagnostics
-                result = current_aggregate.copy()
-                current_diags = result.get('params', {}).get('diagnostics', [])
-
-                new_params = new_msg.get('params', {})
-                new_diags = new_params.get('diagnostics', [])
-
-                # Add source to new diagnostics
-                for diag in new_diags:
-                    if 'source' not in diag:
-                        diag['source'] = source.name
-
-                # Combine diagnostics
-                all_diags = current_diags + new_diags
-                result['params']['diagnostics'] = all_diags
-                return result
-            elif 'result' in new_msg:
-                # Merge responses based on what method was called
-                # For initialize, merge capabilities
-                current_result = current_aggregate.get('result')
-                if isinstance(current_result, dict) and 'capabilities' in current_result:
-                    return await self._merge_initialize(current_aggregate, new_msg, source)
-                else:
-                    # For other responses (like shutdown), just return current
-                    return current_aggregate
-
-            return current_aggregate
-
-    async def _merge_initialize(self, current: JSON, new: JSON, source) -> JSON:
-        """Merge initialize responses."""
-        result = current.copy()
-        current_caps = result.get('result', {}).get('capabilities', {})
-        new_caps = new.get('result', {}).get('capabilities', {})
+    async def _merge_initialize_payloads(
+        self,
+        aggregate: JSON,
+        payload: JSON,
+        source: ServerProcess
+    ) -> JSON:
+        """Merge initialize response payloads (result objects)."""
+        result = aggregate.copy()
+        current_caps = result.get('capabilities', {})
+        new_caps = payload.get('capabilities', {})
 
         # Merge capabilities
         for key, value in new_caps.items():
