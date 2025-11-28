@@ -11,6 +11,7 @@ sys.path.insert(0, str(project_dir))
 
 from jsonrpc import read_message_sync, write_message_sync, JSON
 import argparse
+import time
 from typing import cast
 
 def log(_prefix : str, s : str):
@@ -57,6 +58,8 @@ def main():
                         help='Which capability set to use')
     _ = parser.add_argument('--publish-diagnostics', action='store_true',
                         help='Send diagnostics after didOpen')
+    _ = parser.add_argument('--delay-diagnostics', type=int, default=0,
+                        help='Delay in milliseconds before publishing diagnostics')
     args = parser.parse_args()
 
     name = cast(str, args.name)
@@ -121,6 +124,11 @@ def main():
                 uri = cast(str, text_doc.get('uri', 'file:///unknown'))
 
                 log(name, f"got notification {method}")
+
+                # Delay if requested
+                delay_ms = cast(int, args.delay_diagnostics)
+                if delay_ms > 0:
+                    time.sleep(delay_ms / 1000.0)
 
                 # Publish diagnostics for this file
                 diagnostic_notification = {
