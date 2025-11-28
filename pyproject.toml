@@ -1,5 +1,5 @@
 [tool.basedpyright]
-typeCheckingMode = "basic"
+typeCheckingMode = "standard"
 pythonVersion = "3.13"
 
 [tool.ruff]
