@@ -175,27 +175,29 @@ async def run_multiplexer(
                 server.stdin.close()
                 await server.stdin.wait_closed()
 
+    def reconstruct_message(agg_state) -> JSON:
+        """Reconstruct full JSONRPC message from aggregation state."""
+        if agg_state['id'] is not None:
+            # Response
+            return {
+                'jsonrpc': '2.0',
+                'id': agg_state['id'],
+                'result': agg_state['aggregate_payload']
+            }
+        else:
+            # Notification
+            return {
+                'jsonrpc': '2.0',
+                'method': agg_state['method'],
+                'params': agg_state['aggregate_payload']
+            }
+
     async def handle_aggregation_timeout(agg_key):
         """Handle timeout for an aggregation - send whatever we have."""
-        if agg_key in pending_aggregations:
-            agg_state = pending_aggregations[agg_key]
-            if agg_state['aggregate_payload'] is not None:
-                # Reconstruct full JSONRPC message
-                if agg_state['id'] is not None:
-                    # Response
-                    final_msg = {
-                        'jsonrpc': '2.0',
-                        'id': agg_state['id'],
-                        'result': agg_state['aggregate_payload']
-                    }
-                else:
-                    # Notification
-                    final_msg = {
-                        'jsonrpc': '2.0',
-                        'method': agg_state['method'],
-                        'params': agg_state['aggregate_payload']
-                    }
-                await send_to_client(final_msg)
+        agg_state = pending_aggregations.get(agg_key)
+        if agg_state and agg_state['aggregate_payload'] is not None:
+            final_msg = reconstruct_message(agg_state)
+            await send_to_client(final_msg)
             del pending_aggregations[agg_key]
 
     async def handle_server_messages(server: ServerProcess):
@@ -273,22 +275,8 @@ async def run_multiplexer(
                     if agg_state['received_count'] == agg_state['expected_count']:
                         # Cancel timeout
                         agg_state['timeout_task'].cancel()
-                        # Reconstruct full JSONRPC message
-                        if agg_state['id'] is not None:
-                            # Response
-                            final_msg = {
-                                'jsonrpc': '2.0',
-                                'id': agg_state['id'],
-                                'result': agg_state['aggregate_payload']
-                            }
-                        else:
-                            # Notification
-                            final_msg = {
-                                'jsonrpc': '2.0',
-                                'method': agg_state['method'],
-                                'params': agg_state['aggregate_payload']
-                            }
                         # Send aggregated result to client
+                        final_msg = reconstruct_message(agg_state)
                         await send_to_client(final_msg)
                         del pending_aggregations[agg_key]
                         # Remove from requests needing aggregation if it's a response
