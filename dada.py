@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-lspylex - A simple LSP multiplexer that forwards JSONRPC messages.
+dada - A simple LSP multiplexer that forwards JSONRPC messages.
 """
 
 import json
@@ -14,7 +14,7 @@ from server_process import ServerProcess
 from typing import cast
 
 def log(s : str):
-    print(f"[lspylex] {s}", file=sys.stderr)
+    print(f"[dada] {s}", file=sys.stderr)
 
 def log_message(direction: str, message: JSON) -> None:
     """
@@ -28,7 +28,7 @@ def log_message(direction: str, message: JSON) -> None:
     else:
         msg_type = 'message'
 
-    # Format: [lspylex] --> method_name {...json...}
+    # Format: [dada] --> method_name {...json...}
     json_str = json.dumps(message, ensure_ascii=False)
     log(f"{direction} {msg_type} {json_str}")
 
@@ -59,7 +59,7 @@ async def launch_server(server_command: list[str], server_index: int) -> ServerP
     # Make name unique by including index for multiple servers
     name = f"{basename}#{server_index}" if server_index > 0 else basename
 
-    print(f"[lspylex] Launching {name}: {' '.join(server_command)}", file=sys.stderr, flush=True)
+    print(f"[dada] Launching {name}: {' '.join(server_command)}", file=sys.stderr, flush=True)
 
     process = await asyncio.create_subprocess_exec(
         *server_command,
@@ -99,12 +99,12 @@ async def run_multiplexer(
     # Track which request IDs need aggregation: id -> method
     requests_needing_aggregation = {}
 
-    print(f"[lspylex] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
+    print(f"[dada] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
     if len(servers) > 1:
         secondaries = [s.name for s in servers[1:]]
-        print(f"[lspylex] Secondary servers: {', '.join(secondaries)}", file=sys.stderr, flush=True)
+        print(f"[dada] Secondary servers: {', '.join(secondaries)}", file=sys.stderr, flush=True)
     if delay_ms > 0:
-        print(f"[lspylex] Delaying server responses by {delay_ms}ms", file=sys.stderr, flush=True)
+        print(f"[dada] Delaying server responses by {delay_ms}ms", file=sys.stderr, flush=True)
 
     # Get client streams
     loop = asyncio.get_event_loop()
@@ -168,7 +168,7 @@ async def run_multiplexer(
                         log_message(f'[{servers[0].name}] -->', msg)
 
         except Exception as e:
-            print(f"[lspylex] Error handling client messages: {e}", file=sys.stderr, flush=True)
+            print(f"[dada] Error handling client messages: {e}", file=sys.stderr, flush=True)
         finally:
             # Close all server stdin
             for server in servers:
@@ -284,7 +284,7 @@ async def run_multiplexer(
                     await send_to_client(msg)
 
         except Exception as e:
-            print(f"[lspylex] Error handling messages from {server.name}: {e}", file=sys.stderr, flush=True)
+            print(f"[dada] Error handling messages from {server.name}: {e}", file=sys.stderr, flush=True)
         finally:
             pass
 
@@ -308,7 +308,7 @@ async def run_multiplexer(
 def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
     """
     Split args on '--' separators.
-    Returns (lspylex_args, [server_command1, server_command2, ...])
+    Returns (dada_args, [server_command1, server_command2, ...])
     """
     if '--' not in args:
         return args, []
@@ -316,8 +316,8 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
     # Find all '--' separator indices
     separator_indices = [i for i, arg in enumerate(args) if arg == '--']
 
-    # Everything before first '--' is lspylex options
-    lspylex_args = args[:separator_indices[0]]
+    # Everything before first '--' is dada options
+    dada_args = args[:separator_indices[0]]
 
     # Split server commands
     server_commands : list[list[str]] = []
@@ -330,7 +330,7 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
         if server_cmd:  # Only add non-empty commands
             server_commands.append(server_cmd)
 
-    return lspylex_args, server_commands
+    return dada_args, server_commands
 
 
 def main() -> None:
@@ -340,37 +340,37 @@ def main() -> None:
     args = sys.argv[1:]
 
     # Parse multiple '--' separators for multiple servers
-    lspylex_args, server_commands = parse_server_commands(args)
+    dada_args, server_commands = parse_server_commands(args)
 
     if not server_commands:
-        print("[lspylex] Usage: lspylex [--quiet-server] [--delay-ms N] -- <primary-server> [args] [-- <secondary-server> [args]]...", file=sys.stderr)
+        print("[dada] Usage: dada [--quiet-server] [--delay-ms N] -- <primary-server> [args] [-- <secondary-server> [args]]...", file=sys.stderr)
         sys.exit(1)
 
-    # Parse lspylex options
-    quiet_server = '--quiet-server' in lspylex_args
+    # Parse dada options
+    quiet_server = '--quiet-server' in dada_args
     delay_ms = 0
 
     # Parse --delay-ms option
-    if '--delay-ms' in lspylex_args:
+    if '--delay-ms' in dada_args:
         try:
-            delay_idx = lspylex_args.index('--delay-ms')
-            if delay_idx + 1 >= len(lspylex_args):
-                print("[lspylex] Error: --delay-ms requires a numeric argument", file=sys.stderr)
+            delay_idx = dada_args.index('--delay-ms')
+            if delay_idx + 1 >= len(dada_args):
+                print("[dada] Error: --delay-ms requires a numeric argument", file=sys.stderr)
                 sys.exit(1)
-            delay_ms = int(lspylex_args[delay_idx + 1])
+            delay_ms = int(dada_args[delay_idx + 1])
             if delay_ms < 0:
-                print("[lspylex] Error: --delay-ms must be non-negative", file=sys.stderr)
+                print("[dada] Error: --delay-ms must be non-negative", file=sys.stderr)
                 sys.exit(1)
         except (ValueError, IndexError):
-            print("[lspylex] Error: --delay-ms requires a numeric argument", file=sys.stderr)
+            print("[dada] Error: --delay-ms requires a numeric argument", file=sys.stderr)
             sys.exit(1)
 
     try:
         asyncio.run(run_multiplexer(server_commands, quiet_server=quiet_server, delay_ms=delay_ms))
     except KeyboardInterrupt:
-        print("\n[lspylex] Shutting down...", file=sys.stderr, flush=True)
+        print("\n[dada] Shutting down...", file=sys.stderr, flush=True)
     except Exception as e:
-        print(f"[lspylex] Fatal error: {e}", file=sys.stderr, flush=True)
+        print(f"[dada] Fatal error: {e}", file=sys.stderr, flush=True)
         sys.exit(1)
 
 

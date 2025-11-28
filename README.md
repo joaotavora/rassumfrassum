@@ -1,4 +1,4 @@
-# lspylex
+# dada
 
 An LSP/JSONRPC multiplexer that connects one LSP client to multiple
 LSP servers. It spawns one or more stdio-enabled LSP server
@@ -8,7 +8,7 @@ connected to its own stdio.
 An LSP client like Emacs's Eglot can invoke it like this:
 
 ```bash
-lspylex.py --some-lspylex-option=42 -- ./s1 --s1option=84 --foo -- ./s2 --s2option=24 --bar
+dada.py --some-dada-option=42 -- ./s1 --s1option=84 --foo -- ./s2 --s2option=24 --bar
 ```
 
 To the client, it mostly feels like talking to a single LSP server.
@@ -30,9 +30,9 @@ pip install -e .
 
 ## Logging
 
-The stderr of `lspylex.py` is the main diagnostics tool. It logs all operations:
+The stderr of `dada.py` is the main diagnostics tool. It logs all operations:
 
-- Messages from `lspylex.py` itself, prefixed with `[lspylex]`
+- Messages from `dada.py` itself, prefixed with `[dada]`
 
 - Messages from each server's stderr, prefixed with the server's
   nickname (discovered dynamically from the `initialize` response)
@@ -69,24 +69,26 @@ The codebase is split into three files:
 `jsonrpc.py` handles bare JSONRPC/pipe logistics and is completely
 ignorant of LSP. It deals with protocol framing and I/O operations.
 
-`lspylex.py` is the entry point with command-line processing. It knows
-about LSP requests, responses, and notifications, but ideally
-shouldn't know anything about particular custom handling of specific
-message types. This objective isn't fully realized yet, but the goal
-is for it to be "frameworky".
+`dada.py` is the entry point with command-line processing. It knows
+about LSP requests, responses, and notifications, and does the
+bookkeeping and tracking for the aggregation, the timeouts etc.
+Shouldn't know anything about particular custom handling of specific
+message types.  
 
-`lsp_router.py` contains the business logic that uses the `lspylex.py`
+`lsp_router.py` contains the business logic that uses the `dada.py`
 facilities. Special handling for the `initialize` and `shutdown`
 requests lives here. The `textDocument/publishDiagnostics` aggregation
-should also be here, though it may not be fully realized yet.
+logic should be here, but totally agnostic from the synchronization
+managed by `dada.py`.
 
 ## Testing
 
-There's a single test at `test/test.sh`. It uses a simple `client.py`
-and `server.py` (multiple copies can be spawned to emulate multiple
-servers) and creates a fifo to wire up the stdio connections. The
-stderr output from this test is useful for understanding how the
-multiplexer operates.
+There's are tests under `test/`. It uses simple `client.py` and and
+`server.py` scripts (multiple copies can be spawned to emulate
+multiple servers) and creates a fifo to wire up the stdio
+connections. The stderr output from this test is useful for
+understanding how the multiplexer operates.  All tests can be run with
+`test/run-all.sh`.
 
 ## Options
 

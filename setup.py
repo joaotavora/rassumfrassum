@@ -2,14 +2,14 @@
 from setuptools import setup
 
 setup(
-    name='lspylex',
+    name='dada',
     version='0.1.0',
     description='A simple LSP multiplexer',
-    py_modules=['lspylex'],
+    py_modules=['dada'],
     python_requires='>=3.10',
     entry_points={
         'console_scripts': [
-            'lspylex=lspylex:main',
+            'dada=dada:main',
         ],
     },
 )
