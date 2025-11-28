@@ -66,7 +66,7 @@ class MessageRouter:
 
         return False
 
-    async def aggregate_message(self, server_name: str, msg: JSON) -> tuple[bool, JSON | None]:
+    async def aggregate_message(self, server, msg: JSON) -> tuple[bool, JSON | None]:
         """
         Add a message to aggregation.
         Returns (is_complete, aggregated_message).
@@ -103,11 +103,12 @@ class MessageRouter:
             return (False, None)
 
         agg_state = self.pending_aggregations[key]
-        agg_state['messages'][server_name] = msg
+        agg_state['messages'][id(server)] = (server, msg)
 
         # Check if all messages collected
         if len(agg_state['messages']) == agg_state['expected_count']:
             method = agg_state['method']
+            # Convert to dict[server, msg] for aggregation functions
             aggregated = await self._aggregate_messages(method, agg_state['messages'])
             del self.pending_aggregations[key]
             return (True, aggregated)
@@ -126,7 +127,7 @@ class MessageRouter:
         """Check if a request ID is pending merge."""
         return request_id in self.pending_aggregations
 
-    async def add_response(self, request_id: int, server_name: str, response: JSON) -> tuple[bool, JSON | None]:
+    async def add_response(self, request_id: int, server, response: JSON) -> tuple[bool, JSON | None]:
         """
         Add a server response to pending merge.
         Returns (is_complete, merged_response).
@@ -136,7 +137,7 @@ class MessageRouter:
             return (False, None)
 
         merge_state = self.pending_aggregations[request_id]
-        merge_state['messages'][server_name] = response
+        merge_state['messages'][id(server)] = (server, response)
 
         # Check if all messages collected
         if len(merge_state['messages']) == merge_state['expected_count']:
@@ -147,39 +148,44 @@ class MessageRouter:
 
         return (False, None)
 
-    async def _aggregate_messages(self, method: str, messages: dict[str, dict]) -> dict:
-        """Aggregate messages based on method type."""
+    async def _aggregate_messages(self, method: str, messages: dict) -> dict:
+        """Aggregate messages based on method type.
+        messages is dict[id(server), (server, msg)]
+        """
         if method == 'initialize':
             return await merge_initialize_responses(messages)
         elif method == 'shutdown':
             # Shutdown returns null, just take first response
-            return next(iter(messages.values()))
+            _, msg = next(iter(messages.values()))
+            return msg
         elif method == 'textDocument/publishDiagnostics':
             # Aggregate diagnostics from all servers
             return await aggregate_diagnostics(messages)
         else:
             # Default: take primary's response (shouldn't reach here)
-            return next(iter(messages.values()))
+            _, msg = next(iter(messages.values()))
+            return msg
 
 
-async def merge_initialize_responses(responses: dict[str, dict]) -> dict:
+async def merge_initialize_responses(responses: dict) -> dict:
     """
     Merge initialize responses from multiple servers.
     Combines capabilities from all servers.
+    responses is dict[id(server), (server, msg)]
     """
     if not responses:
         raise ValueError("No responses to merge")
 
     # Start with primary's response as base
     primary_response = None
-    for server_name, response in responses.items():
-        if 'basedpyright' in server_name.lower() or 'pyright' in server_name.lower():
+    for server, response in responses.values():
+        if 'basedpyright' in server.name.lower() or 'pyright' in server.name.lower():
             primary_response = response
             break
 
     if primary_response is None:
         # Fallback to first response
-        primary_response = next(iter(responses.values()))
+        _, primary_response = next(iter(responses.values()))
 
     merged = primary_response.copy()
 
@@ -190,7 +196,7 @@ async def merge_initialize_responses(responses: dict[str, dict]) -> dict:
     merged_caps = merged['result']['capabilities']
 
     # Merge capabilities from other servers
-    for server_name, response in responses.items():
+    for server, response in responses.values():
         if response == primary_response:
             continue
 
@@ -214,16 +220,18 @@ async def merge_initialize_responses(responses: dict[str, dict]) -> dict:
     return merged
 
 
-async def aggregate_diagnostics(notifications: dict[str, dict]) -> dict:
+async def aggregate_diagnostics(notifications: dict) -> dict:
     """
     Aggregate textDocument/publishDiagnostics notifications from multiple servers.
     Merges diagnostics for the same URI.
+    notifications is dict[id(server), (server, msg)]
     """
     if not notifications:
         return {}
 
     # Take first notification as base
-    base_notification = next(iter(notifications.values())).copy()
+    _, base_notification = next(iter(notifications.values()))
+    base_notification = base_notification.copy()
 
     # Get the URI from params
     base_params = base_notification.get('params', {})
@@ -231,14 +239,14 @@ async def aggregate_diagnostics(notifications: dict[str, dict]) -> dict:
 
     # Collect all diagnostics from all servers
     all_diagnostics = []
-    for server_name, notification in notifications.items():
+    for server, notification in notifications.values():
         params = notification.get('params', {})
         diags = params.get('diagnostics', [])
 
         # Add source field to each diagnostic
         for diag in diags:
             if 'source' not in diag:
-                diag['source'] = server_name
+                diag['source'] = server.name
         all_diagnostics.extend(diags)
 
     # Update base notification with merged diagnostics

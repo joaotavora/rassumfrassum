@@ -201,7 +201,7 @@ async def run_multiplexer(
 
                 # Check if message needs aggregation
                 if router.should_aggregate(msg):
-                    is_complete, aggregated = await router.aggregate_message(server.name, msg)
+                    is_complete, aggregated = await router.aggregate_message(server, msg)
                     if is_complete:
                         assert aggregated
                         # Restore ID for responses
