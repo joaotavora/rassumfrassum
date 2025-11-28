@@ -33,10 +33,6 @@ class MessageRouter:
         """Determine if a request should go to all servers."""
         return method in ['initialize', 'shutdown']
 
-    def is_notification(self, msg: JSON) -> bool:
-        """Check if message is a notification (no 'id' field)."""
-        return 'id' not in msg
-
     def on_server_message(
         self,
         method: str | None,

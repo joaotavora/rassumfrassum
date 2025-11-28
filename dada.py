@@ -8,7 +8,7 @@ import asyncio
 import sys
 import os
 
-from lsp_router import MessageRouter
+from wowo import MessageRouter
 from jsonrpc import read_message as read_lsp_message, write_message as write_lsp_message, JSON
 from server_process import ServerProcess
 from typing import cast
@@ -99,6 +99,11 @@ async def run_multiplexer(
     # Track which request IDs need aggregation: id -> method
     requests_needing_aggregation = {}
 
+    # Track server requests to remap IDs
+    # remapped_id -> (original_server_id, server_name)
+    server_request_mapping = {}
+    next_remapped_id = 0
+
     print(f"[dada] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
     if len(servers) > 1:
         secondaries = [s.name for s in servers[1:]]
@@ -144,16 +149,16 @@ async def run_multiplexer(
 
                 log_message('-->', msg)
 
+                method = msg.get('method')
+                id = msg.get('id')
+
                 # Route based on message type
-                if router.is_notification(msg):
+                if id is None and method is not None:  # notification
                     # Broadcast all notifications to all servers
                     for server in servers:
                         await write_lsp_message(server.stdin, msg)
-                else:
-                    # Request - check if it should go to all servers
-                    method = cast(str, msg.get('method'))
-                    client_id = cast(int, msg.get('id'))
-
+                elif method is not None:
+                    # Request from client to servers
                     if router.should_route_to_all(method):
                         # Send to all servers with original ID
                         for server in servers:
@@ -161,11 +166,31 @@ async def run_multiplexer(
                             log_message(f'[{server.name}] -->', msg)
 
                         # Track that this request needs aggregation
-                        requests_needing_aggregation[client_id] = method
+                        requests_needing_aggregation[id] = method
                     else:
                         # Send only to primary server with original ID
                         await write_lsp_message(servers[0].stdin, msg)
                         log_message(f'[{servers[0].name}] -->', msg)
+                else:
+                    # Response from client (to a server request)
+                    if id in server_request_mapping:
+                        # This is a response to a server request - remap ID and route to correct server
+                        original_id, server_name = server_request_mapping[id]
+                        del server_request_mapping[id]
+
+                        # Find the server
+                        target_server = next((s for s in servers if s.name == server_name), None)
+                        if target_server:
+                            # Remap ID back to original
+                            remapped_msg = msg.copy()
+                            remapped_msg['id'] = original_id
+                            await write_lsp_message(target_server.stdin, remapped_msg)
+                            log_message(f'[{target_server.name}] -->', remapped_msg)
+                        else:
+                            log(f"Error: Could not find server {server_name} for response")
+                    else:
+                        # Unknown response, log error
+                        log(f"Warning: Received response with id={id} but no matching request")
 
         except Exception as e:
             print(f"[dada] Error handling client messages: {e}", file=sys.stderr, flush=True)
@@ -202,6 +227,7 @@ async def run_multiplexer(
 
     async def handle_server_messages(server: ServerProcess):
         """Read from a server and route back to client."""
+        nonlocal next_remapped_id
         try:
             while True:
                 msg = await read_lsp_message(server.stdout)
@@ -210,9 +236,24 @@ async def run_multiplexer(
 
                 log_message(f'[{server.name}] <--', msg)
 
-                # Extract method and payload from message
+                # Distinguish message types
                 msg_id = msg.get('id')
                 method = msg.get('method')
+
+                # Server request: has both method and id
+                if method is not None and msg_id is not None:
+                    # This is a request from server to client - remap ID
+                    remapped_id = next_remapped_id
+                    next_remapped_id += 1
+                    server_request_mapping[remapped_id] = (msg_id, server.name)
+
+                    # Forward to client with remapped ID
+                    remapped_msg = msg.copy()
+                    remapped_msg['id'] = remapped_id
+                    await send_to_client(remapped_msg)
+                    continue
+
+                # Server notification or response - extract payload
                 if method is not None:
                     # Notification - payload is params
                     payload = msg.get('params', {})

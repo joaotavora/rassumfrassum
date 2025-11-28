@@ -60,6 +60,8 @@ def main():
                         help='Send diagnostics after didOpen')
     _ = parser.add_argument('--delay-diagnostics', type=int, default=0,
                         help='Delay in milliseconds before publishing diagnostics')
+    _ = parser.add_argument('--send-request-after-init', action='store_true',
+                        help='Send a request to client after initialization')
     args = parser.parse_args()
 
     name = cast(str, args.name)
@@ -158,6 +160,26 @@ def main():
                 }
                 write_message_sync(diagnostic_notification)
                 log(name, f"published diagnostics for {uri}")
+
+            elif method == 'initialized' and cast(bool, args.send_request_after_init):
+                # Send a request to the client after initialized notification
+                log(name, f"got notification {method}")
+                request_to_client = {
+                    'jsonrpc': '2.0',
+                    'id': 999,  # Server's request ID
+                    'method': 'workspace/configuration',
+                    'params': {
+                        'items': [
+                            {'section': 'python'}
+                        ]
+                    }
+                }
+                log(name, "Sending request to client: workspace/configuration")
+                write_message_sync(request_to_client)
+
+            elif msg_id == 999 and method is None:
+                # This is a response to our workspace/configuration request
+                log(name, f"Got response to workspace/configuration request: {message}")
 
             else:
                 # Log all other requests and notifications

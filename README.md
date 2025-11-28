@@ -53,13 +53,13 @@ JSONRPC has requests, responses, and notifications. Here's how they're routed:
 
 **From servers to client:**
 
-- Most notifications go directly through
+- Many notifications go directly through
 
 - Some notifications like `textDocument/publishDiagnostics` wait for
   all servers to send theirs, then the results are merged before
   forwarding to the client
 
-- All server requests go to the client. ID tweaking as necessary
+- All server requests go to the client.  ID tweaking is necessary
   because server's don't know about each other and they could clash.
 
 ## Architecture
@@ -75,15 +75,15 @@ bookkeeping and tracking for the aggregation, the timeouts etc.
 Shouldn't know anything about particular custom handling of specific
 message types.  
 
-`lsp_router.py` contains the business logic that uses the `dada.py`
+`wowo.py` contains the business logic that uses the `dada.py`
 facilities. Special handling for the `initialize` and `shutdown`
 requests lives here. The `textDocument/publishDiagnostics` aggregation
-logic should be here, but totally agnostic from the synchronization
-managed by `dada.py`.
+logic should be here, but totally agnostic of the synchronization
+of messages from different servers.
 
 ## Testing
 
-There's are tests under `test/`. It uses simple `client.py` and and
+There are tests under `test/`. It uses simple `client.py` and and
 `server.py` scripts (multiple copies can be spawned to emulate
 multiple servers) and creates a fifo to wire up the stdio
 connections. The stderr output from this test is useful for
