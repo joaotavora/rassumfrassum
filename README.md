@@ -88,12 +88,10 @@ servers) and creates a fifo to wire up the stdio connections. The
 stderr output from this test is useful for understanding how the
 multiplexer operates.
 
-## Known Issues
+## Options
 
-The `--delay-ms` option delays all JSONRPC messages sent to the client
-by a number of milliseconds. Currently it's broken because it puts the
-timer in the main task queue. If you delay two messages A and B by 3
-seconds, and they arrive at t=0.5 and t=1.5, they get dispatched at
-t=3.5 (correct) and t=6.5 (wrong), when they should be dispatched at
-t=3.5 and t=4.5. This handling should probably move to `jsonrpc.py`
-(only in its async methods).
+The `--delay-ms N` option delays all JSONRPC messages sent to the
+client by N milliseconds. Each message gets its own independent timer,
+so if two messages arrive at t=0.5 and t=1.5 with a 3-second delay,
+they'll be dispatched at t=3.5 and t=4.5 respectively. Useful for
+diagnostics and testing.

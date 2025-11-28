@@ -132,6 +132,20 @@ async def run_multiplexer(
         client_writer_transport, client_writer_protocol, None, loop
     )
 
+    async def send_to_client(message: JSON):
+        """Send a message to the client, with optional delay."""
+        async def delayed_send():
+            await asyncio.sleep(delay_ms / 1000.0)
+            log_message('<--', message)
+            await write_lsp_message(client_writer, message)
+
+        if delay_ms > 0:
+            # Spawn independent background task so delays don't accumulate
+            asyncio.create_task(delayed_send())
+        else:
+            log_message('<--', message)
+            await write_lsp_message(client_writer, message)
+
     async def send_diagnostic_to_client(uri: str, diagnostics: list[JSON]):
         """Callback for sending merged diagnostics to client."""
         notification = {
@@ -142,10 +156,7 @@ async def run_multiplexer(
                 'diagnostics': diagnostics
             }
         }
-        if delay_ms > 0:
-            await asyncio.sleep(delay_ms / 1000.0)
-        log_message('<--', notification)
-        await write_lsp_message(client_writer, notification)
+        await send_to_client(notification)
 
     async def handle_client_messages():
         """Read from client and route to appropriate servers."""
@@ -216,9 +227,7 @@ async def run_multiplexer(
 
                         # Send merged response to client
                         merged['id'] = msg_id
-                        if delay_ms > 0:
-                            await asyncio.sleep(delay_ms / 1000.0)
-                        await write_lsp_message(client_writer, merged)
+                        await send_to_client(merged)
                     continue
 
                 # Check for diagnostic notifications
@@ -235,10 +244,7 @@ async def run_multiplexer(
                     continue
 
                 # Forward everything else to client with original ID
-                if delay_ms > 0:
-                    await asyncio.sleep(delay_ms / 1000.0)
-
-                await write_lsp_message(client_writer, msg)
+                await send_to_client(msg)
 
         except Exception as e:
             print(f"[lspylex] Error handling messages from {server.name}: {e}", file=sys.stderr, flush=True)
