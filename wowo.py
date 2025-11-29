@@ -21,10 +21,15 @@ class LspLogic:
         """Determine if a request should go to all servers."""
         return method in ['initialize', 'shutdown']
 
+    def on_client_request(self, method: str, params: JSON) -> None:
+        """
+        Handle client requests to servers.
+        """
+        pass
+
     def on_client_notification(self, method: str, params: JSON) -> None:
         """
         Handle client notifications to track document state.
-        Updates document version tracking for didOpen, didChange, and didClose.
         """
         if method == 'textDocument/didOpen':
             text_doc = params.get('textDocument', {})
@@ -46,47 +51,79 @@ class LspLogic:
             if uri is not None:
                 self.document_versions.pop(uri, None)
 
-    def on_server_message(
+    def on_client_response(
         self,
-        method: str | None,
-        payload: JSON,
+        method: str,
+        request_params: JSON,
+        response_payload: JSON,
+        is_error: bool,
+        server: ServerProcess
+    ) -> None:
+        """
+        Handle client responses to server requests.
+        """
+        pass
+
+    def on_server_request(
+        self,
+        method: str,
+        params: JSON,
+        source: ServerProcess
+    ) -> None:
+        """
+        Handle server requests to the client.
+        """
+        pass
+
+    def on_server_notification(
+        self,
+        method: str,
+        params: JSON,
         source: ServerProcess
     ) -> JSON:
         """
-        Handle immediate processing of server message payload.
-        Can perform side effects like updating source.name.
-        Returns the (potentially modified) payload.
+        Handle server notifications.
+        Returns the (potentially modified) params.
         """
-        # Extract server name from initialize response
-        if method == 'initialize' and 'name' in payload.get('serverInfo', {}):
-            source.name = payload['serverInfo']['name']
-
         # Add source attribution to diagnostics
         if method == 'textDocument/publishDiagnostics':
-            result = payload.copy()
+            result = params.copy()
             for diag in result.get('diagnostics', []):
                 if 'source' not in diag:
                     diag['source'] = source.name
             return result
 
-        return payload
+        return params
 
-    def should_aggregate(self, method: str | None) -> bool:
+    def on_server_response(
+        self,
+        method: str | None,
+        request_params: JSON,
+        response_payload: JSON,
+        is_error: bool,
+        server: ServerProcess
+    ) -> JSON:
         """
-        Check if this notification needs aggregation from multiple servers.
+        Handle server responses.
+        Returns the (potentially modified) response_payload.
         """
-        return method == 'textDocument/publishDiagnostics'
+        # Extract server name from initialize response
+        if method == 'initialize' and not is_error and 'name' in response_payload.get('serverInfo', {}):
+            server.name = response_payload['serverInfo']['name']
 
-    def get_aggregation_key(self, method: str | None, payload: JSON) -> tuple:
+        return response_payload
+
+    def get_aggregation_key(self, method: str | None, payload: JSON) -> tuple | None:
         """
-        Get a unique key identifying this aggregation session for a notification.
+        Get aggregation key for notifications that need aggregation.
+        Returns None if this notification doesn't need aggregation.
         """
         if method == 'textDocument/publishDiagnostics':
             # Notification: use method + URI
             uri = payload.get('uri', '')
             return ('notification', method, uri)
 
-        return ('notification', method)
+        return None
 
     def get_aggregation_timeout_ms(self, method: str | None) -> int:
         """

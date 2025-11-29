@@ -93,11 +93,11 @@ async def run_multiplexer(
     # key -> {expected_count, received_count, id, method, aggregate_payload, timeout_task}
     pending_aggregations = {}
 
-    # Track which request IDs need aggregation: id -> method
+    # Track which request IDs need aggregation: id -> (method, params)
     requests_needing_aggregation = {}
 
     # Track server requests to remap IDs
-    # remapped_id -> (original_server_id, server)
+    # remapped_id -> (original_server_id, server, method, params)
     server_request_mapping = {}
     next_remapped_id = 0
 
@@ -161,6 +161,9 @@ async def run_multiplexer(
                     for server in servers:
                         await write_lsp_message(server.stdin, msg)
                 elif method is not None: # request
+                    # Inform LspLogic
+                    params = msg.get("params", {})
+                    logic.on_client_request(method, params)
                     # Track shutdown requests
                     if method == "shutdown":
                         shutting_down = True
@@ -172,7 +175,7 @@ async def run_multiplexer(
                             log_message(f"[{server.name}] -->", msg)
 
                         # Track that this request needs aggregation
-                        requests_needing_aggregation[id] = method
+                        requests_needing_aggregation[id] = (method, cast(JSON, params))
                     else:
                         # Send only to primary server with original ID
                         await write_lsp_message(servers[0].stdin, msg)
@@ -181,8 +184,19 @@ async def run_multiplexer(
                     # Response from client (to a server request)
                     if id in server_request_mapping:
                         # This is a response to a server request - remap ID and route to correct server
-                        original_id, target_server = server_request_mapping[id]
+                        original_id, target_server, req_method, req_params = server_request_mapping[id]
                         del server_request_mapping[id]
+
+                        # Inform LspLogic
+                        is_error = "error" in msg
+                        response_payload = msg.get("error") if is_error else msg.get("result")
+                        logic.on_client_response(
+                            req_method,
+                            req_params,
+                            cast(JSON, response_payload),
+                            is_error,
+                            target_server
+                        )
 
                         # Remap ID back to original
                         remapped_msg = msg.copy()
@@ -249,10 +263,16 @@ async def run_multiplexer(
 
                 # Server request: has both method and id
                 if method is not None and msg_id is not None:
+                    # Handle server request
+                    params = msg.get("params", {})
+                    logic.on_server_request(method, cast(JSON, params), server)
+
                     # This is a request from server to client - remap ID
                     remapped_id = next_remapped_id
                     next_remapped_id += 1
-                    server_request_mapping[remapped_id] = (msg_id, server)
+                    server_request_mapping[remapped_id] = (
+                        msg_id, server, method, cast(JSON, params)
+                    )
 
                     # Forward to client with remapped ID
                     remapped_msg = msg.copy()
@@ -260,32 +280,38 @@ async def run_multiplexer(
                     await send_to_client(remapped_msg)
                     continue
 
-                # Server notification or response - extract payload
+                # Server notification or response - extract payload and handle
                 if method is not None:
                     # Notification - payload is params
                     payload = msg.get("params", {})
+                    payload = logic.on_server_notification(
+                        method, cast(JSON, payload), server
+                    )
                 else:
-                    # Response - payload is result, lookup method from request tracking
-                    payload = msg.get("result")
-                    method = requests_needing_aggregation.get(msg_id)
+                    # Response - lookup method and params from request tracking
+                    request_info = requests_needing_aggregation.get(msg_id)
+                    if request_info:
+                        method, req_params = request_info
+                    else:
+                        method, req_params = None, {}
 
-                # Immediate handling (e.g., server name discovery, source attribution)
-                payload = logic.on_server_message(method, cast(JSON, payload), server)
+                    is_error = "error" in msg
+                    payload = msg.get("error") if is_error else msg.get("result")
+                    payload = logic.on_server_response(
+                        method, cast(JSON, req_params), cast(JSON, payload), is_error, server
+                    )
 
                 # Check if message needs aggregation
-                needs_aggregation = False
-                agg_key = None
+                aggregation_key = None
                 if msg_id is not None and msg_id in requests_needing_aggregation:
                     # This is a response to a request that was sent to all servers
-                    needs_aggregation = True
-                    agg_key = ("response", msg_id)
-                elif logic.should_aggregate(method):
-                    # This is a notification that needs aggregation
-                    needs_aggregation = True
-                    agg_key = logic.get_aggregation_key(method, payload)
+                    aggregation_key = ("response", msg_id)
+                else:
+                    # Check if this notification needs aggregation
+                    aggregation_key = logic.get_aggregation_key(method, payload)
 
-                if needs_aggregation:
-                    agg_state = pending_aggregations.get(agg_key)
+                if aggregation_key is not None:
+                    agg_state = pending_aggregations.get(aggregation_key)
                     if agg_state:
                         # Not the first message - aggregate with previous
                         agg_state[
@@ -311,14 +337,14 @@ async def run_multiplexer(
                             "aggregate_payload": payload,
                             "timeout_task": timeout_task,
                         }
-                        pending_aggregations[agg_key] = agg_state
+                        pending_aggregations[aggregation_key] = agg_state
 
                         # Setup timeout handler
                         async def timeout_handler():
                             await timeout_task
                             # Check if aggregation still pending (might have completed early)
-                            if agg_key in pending_aggregations:
-                                await handle_aggregation_timeout(agg_key)
+                            if aggregation_key in pending_aggregations:
+                                await handle_aggregation_timeout(aggregation_key)
 
                         asyncio.create_task(timeout_handler())
 
@@ -329,7 +355,7 @@ async def run_multiplexer(
                         # Send aggregated result to client
                         final_msg = reconstruct_message(agg_state)
                         await send_to_client(final_msg)
-                        del pending_aggregations[agg_key]
+                        del pending_aggregations[aggregation_key]
                         # Remove from requests needing aggregation if it's a response
                         if msg_id is not None:
                             requests_needing_aggregation.pop(msg_id, None)
