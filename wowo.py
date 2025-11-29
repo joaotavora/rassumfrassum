@@ -1,5 +1,5 @@
 """
-LSP-specific message routing and merging logic.
+LSP-specific message routing adn merging logic.
 """
 
 from jsonrpc import JSON
@@ -84,7 +84,7 @@ class LspLogic:
         """
         if method == 'textDocument/publishDiagnostics':
             # Merge diagnostics
-            current_diags = aggregate.get('diagnostics', []);
+            current_diags = aggregate.get('diagnostics', [])
             new_diags = payload.get('diagnostics', []);
 
             # Add source to new diagnostics
@@ -116,15 +116,33 @@ class LspLogic:
         result = aggregate.copy()
         current_caps = result.get('capabilities', {})
         new_caps = payload.get('capabilities', {})
+        current_info = result.get('serverInfo', {})
+        new_info = payload.get('serverInfo', {})
 
-        # Merge capabilities
-        for key, value in new_caps.items():
-            if key not in current_caps:
-                current_caps[key] = value
-            elif isinstance(value, dict) and isinstance(current_caps[key], dict):
-                current_caps[key] = {**current_caps[key], **value}
-            elif isinstance(value, list) and isinstance(current_caps[key], list):
-                current_caps[key] = list(set(current_caps[key] + value))
+        # Determine which response is from primary
+        current_is_primary = current_info.get('name') == self.primary_server.name
+        new_is_primary = source == self.primary_server
+
+        # Start with primary server's capabilities
+        if new_is_primary:
+            merged_caps = new_caps.copy()
+        elif current_is_primary:
+            merged_caps = current_caps.copy()
+        else:
+            # Neither is primary (shouldn't happen in 2-server case)
+            merged_caps = current_caps.copy()
+
+        # Special handling for textDocumentSync
+        if 'textDocumentSync' in current_caps or 'textDocumentSync' in new_caps:
+            current_sync = current_caps.get('textDocumentSync')
+            new_sync = new_caps.get('textDocumentSync')
+
+            # If either is the number 1, that wins
+            if current_sync == 1 or new_sync == 1:
+                merged_caps['textDocumentSync'] = 1
+            # Otherwise use primary's value (already set above)
+
+        result['capabilities'] = merged_caps
 
         # Merge serverInfo
         current_info = result.get('serverInfo', {})
