@@ -3,10 +3,11 @@
 dada - A simple LSP multiplexer that forwards JSONRPC messages.
 """
 
-import json
+import argparse
 import asyncio
-import sys
+import json
 import os
+import sys
 
 from wowo import LspLogic
 from jsonrpc import (
@@ -41,7 +42,7 @@ def log_message(direction: str, message: JSON) -> None:
 
 async def forward_server_stderr(server: ServerProcess) -> None:
     """
-    Forward server's stderr to our stderr, prefixing each line with the server basename.
+    Forward server's stderr to our stderr, with appropriate prefixing.
     """
     try:
         while True:
@@ -74,12 +75,14 @@ async def launch_server(server_command: list[str], server_index: int) -> ServerP
 
 
 async def run_multiplexer(
-    server_commands: list[list[str]], quiet_server: bool = False, delay_ms: int = 0
+    server_commands: list[list[str]], opts: argparse.Namespace
 ) -> None:
     """
     Main multiplexer loop.
     Handles one or more LSP servers with intelligent message routing.
     """
+    quiet_server = opts.quiet_server
+    delay_ms = opts.delay_ms
     # Launch all servers
     servers: list[ServerProcess] = []
     for i, cmd in enumerate(server_commands):
@@ -431,34 +434,24 @@ def main() -> None:
     dada_args, server_commands = parse_server_commands(args)
 
     if not server_commands:
-        log("Usage: dada [--quiet-server] [--delay-ms N] -- <primary-server> [args] [-- <secondary-server> [args]]...")
+        log("Usage: dada [OPTIONS] -- <primary-server> [args] [-- <secondary-server> [args]]...")
         sys.exit(1)
 
-    # Parse dada options
-    quiet_server = "--quiet-server" in dada_args
-    delay_ms = 0
+    # Parse dada options with argparse
+    parser = argparse.ArgumentParser(
+        prog='dada',
+        add_help=False,
+    )
+    parser.add_argument('--quiet-server', action='store_true')
+    parser.add_argument('--delay-ms', type=int, default=0, metavar='N')
 
-    # Parse --delay-ms option
-    if "--delay-ms" in dada_args:
-        try:
-            delay_idx = dada_args.index("--delay-ms")
-            if delay_idx + 1 >= len(dada_args):
-                log("Error: --delay-ms requires a numeric argument")
-                sys.exit(1)
-            delay_ms = int(dada_args[delay_idx + 1])
-            if delay_ms < 0:
-                log("Error: --delay-ms must be non-negative")
-                sys.exit(1)
-        except (ValueError, IndexError):
-            log("Error: --delay-ms requires a numeric argument")
-            sys.exit(1)
+    opts = parser.parse_args(dada_args)
+
+    # Validate
+    assert opts.delay_ms >= 0, "--delay-ms must be non-negative"
 
     try:
-        asyncio.run(
-            run_multiplexer(
-                server_commands, quiet_server=quiet_server, delay_ms=delay_ms
-            )
-        )
+        asyncio.run(run_multiplexer(server_commands, opts))
     except KeyboardInterrupt:
         log("\nShutting down...")
     except Exception as e:
