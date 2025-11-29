@@ -122,4 +122,33 @@ class MessageRouter:
             elif isinstance(value, list) and isinstance(current_caps[key], list):
                 current_caps[key] = list(set(current_caps[key] + value))
 
+        # Merge serverInfo
+        current_info = result.get('serverInfo', {})
+        new_info = payload.get('serverInfo', {})
+
+        if new_info:
+            merged_info = {}
+
+            # Concatenate names with '+'
+            current_name = current_info.get('name', '')
+            new_name = new_info.get('name', '')
+            if current_name and new_name:
+                merged_info['name'] = f"{current_name}+{new_name}"
+            elif new_name:
+                merged_info['name'] = new_name
+            elif current_name:
+                merged_info['name'] = current_name
+
+            # Concatenate versions with ','
+            current_version = current_info.get('version', '')
+            new_version = new_info.get('version', '')
+            if current_version and new_version:
+                merged_info['version'] = f"{current_version},{new_version}"
+            elif new_version:
+                merged_info['version'] = new_version
+            elif current_version:
+                merged_info['version'] = current_version
+
+            result['serverInfo'] = merged_info
+
         return result
