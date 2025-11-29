@@ -1,5 +1,5 @@
 """
-LSP-specific message routing adn merging logic.
+LSP-specific message routing and merging logic.
 """
 
 from jsonrpc import JSON
@@ -85,7 +85,7 @@ class LspLogic:
         if method == 'textDocument/publishDiagnostics':
             # Merge diagnostics
             current_diags = aggregate.get('diagnostics', [])
-            new_diags = payload.get('diagnostics', []);
+            new_diags = payload.get('diagnostics', [])
 
             # Add source to new diagnostics
             for diag in new_diags:
@@ -93,12 +93,12 @@ class LspLogic:
                     diag['source'] = source.name
 
             # Combine diagnostics
-            result = aggregate.copy()
-            result['diagnostics'] = current_diags + new_diags
-            return result
+            aggregate['diagnostics'] = current_diags + new_diags
+            return aggregate
         elif method == 'initialize':
             # Merge capabilities
-            return await self._merge_initialize_payloads(aggregate, payload, source)
+            return await self._merge_initialize_payloads(
+                aggregate, payload, source)
         elif method == 'shutdown':
             # Shutdown returns null, just return current aggregate
             return aggregate
@@ -113,62 +113,41 @@ class LspLogic:
         source: ServerProcess
     ) -> JSON:
         """Merge initialize response payloads (result objects)."""
-        result = aggregate.copy()
-        current_caps = result.get('capabilities', {})
+
+        # Determine if this response is from primary
+        primary_payload = source == self.primary_server
+
+        # Merge capabilities.  Be very naive and almost always use the
+        # primary server's capabilities
+        current_caps = aggregate.get('capabilities', {})
         new_caps = payload.get('capabilities', {})
-        current_info = result.get('serverInfo', {})
-        new_info = payload.get('serverInfo', {})
+        merged_caps = new_caps if primary_payload else current_caps
 
-        # Determine which response is from primary
-        current_is_primary = current_info.get('name') == self.primary_server.name
-        new_is_primary = source == self.primary_server
-
-        # Start with primary server's capabilities
-        if new_is_primary:
-            merged_caps = new_caps.copy()
-        elif current_is_primary:
-            merged_caps = current_caps.copy()
-        else:
-            # Neither is primary (shouldn't happen in 2-server case)
-            merged_caps = current_caps.copy()
-
-        # Special handling for textDocumentSync
+        # Merge textDocumentSync capability.  If one server only
+        # supports full text, then be it  ¯\_(ツ)_/¯
         if 'textDocumentSync' in current_caps or 'textDocumentSync' in new_caps:
-            current_sync = current_caps.get('textDocumentSync')
-            new_sync = new_caps.get('textDocumentSync')
-
-            # If either is the number 1, that wins
-            if current_sync == 1 or new_sync == 1:
+            probe = new_caps.get('textDocumentSync')
+            if probe and probe == 1:
                 merged_caps['textDocumentSync'] = 1
-            # Otherwise use primary's value (already set above)
 
-        result['capabilities'] = merged_caps
+        aggregate['capabilities'] = merged_caps
 
         # Merge serverInfo
-        current_info = result.get('serverInfo', {})
-        new_info = payload.get('serverInfo', {})
+        s_info = payload.get('serverInfo', {})
+        if s_info:
+            def merge_field(field: str, s: str) -> str:
+                current_info = aggregate.get('serverInfo', {})
+                cur = current_info.get(field, '')
+                new = s_info.get(field, '')
 
-        if new_info:
-            def merge_field(field: str, sep: str) -> str:
-                current = current_info.get(field, '')
-                new = new_info.get(field, '')
+                if not (cur and new):
+                    return new or cur
 
-                if not (current and new):
-                    return new or current
+                return f"{new}{s}{cur}" if primary_payload else f"{cur}{s}{new}"
 
-                # Check if we need to swap to ensure primary comes first
-                current_is_primary = current_info.get('name') == self.primary_server.name
-                new_is_primary = source == self.primary_server
-
-                # If new is primary but current isn't, swap order
-                if new_is_primary and not current_is_primary:
-                    return f"{new}{sep}{current}"
-                else:
-                    return f"{current}{sep}{new}"
-
-            result['serverInfo'] = {
+            aggregate['serverInfo'] = {
                 'name': merge_field('name', '+'),
                 'version': merge_field('version', ',')
             }
-
-        return result
+        # Return the mutated aggregate
+        return aggregate

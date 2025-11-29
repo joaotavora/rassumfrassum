@@ -43,7 +43,6 @@ async def forward_server_stderr(server: ServerProcess) -> None:
     """
     Forward server's stderr to our stderr, prefixing each line with the server basename.
     """
-    assert server.stderr
     try:
         while True:
             line = await server.stderr.readline()
@@ -63,11 +62,7 @@ async def launch_server(server_command: list[str], server_index: int) -> ServerP
     # Make name unique by including index for multiple servers
     name = f"{basename}#{server_index}" if server_index > 0 else basename
 
-    print(
-        f"[dada] Launching {name}: {' '.join(server_command)}",
-        file=sys.stderr,
-        flush=True,
-    )
+    log(f"Launching {name}: {' '.join(server_command)}")
 
     process = await asyncio.create_subprocess_exec(
         *server_command,
@@ -109,20 +104,12 @@ async def run_multiplexer(
     # Track shutdown state
     shutting_down = False
 
-    print(f"[dada] Primary server: {servers[0].name}", file=sys.stderr, flush=True)
+    log(f"Primary server: {servers[0].name}")
     if len(servers) > 1:
         secondaries = [s.name for s in servers[1:]]
-        print(
-            f"[dada] Secondary servers: {', '.join(secondaries)}",
-            file=sys.stderr,
-            flush=True,
-        )
+        log(f"Secondary servers: {', '.join(secondaries)}")
     if delay_ms > 0:
-        print(
-            f"[dada] Delaying server responses by {delay_ms}ms",
-            file=sys.stderr,
-            flush=True,
-        )
+        log(f"Delaying server responses by {delay_ms}ms")
 
     # Get client streams
     loop = asyncio.get_event_loop()
@@ -208,11 +195,7 @@ async def run_multiplexer(
                         )
 
         except Exception as e:
-            print(
-                f"[dada] Error handling client messages: {e}",
-                file=sys.stderr,
-                flush=True,
-            )
+            log(f"Error handling client messages: {e}")
         finally:
             # Close all server stdin
             for server in servers:
@@ -357,11 +340,7 @@ async def run_multiplexer(
             # Server crashed - re-raise to propagate to main
             raise
         except Exception as e:
-            print(
-                f"[dada] Error handling messages from {server.name}: {e}",
-                file=sys.stderr,
-                flush=True,
-            )
+            log(f"Error handling messages from {server.name}: {e}")
         finally:
             pass
 
@@ -425,10 +404,7 @@ def main() -> None:
     dada_args, server_commands = parse_server_commands(args)
 
     if not server_commands:
-        print(
-            "[dada] Usage: dada [--quiet-server] [--delay-ms N] -- <primary-server> [args] [-- <secondary-server> [args]]...",
-            file=sys.stderr,
-        )
+        log("Usage: dada [--quiet-server] [--delay-ms N] -- <primary-server> [args] [-- <secondary-server> [args]]...")
         sys.exit(1)
 
     # Parse dada options
@@ -440,19 +416,14 @@ def main() -> None:
         try:
             delay_idx = dada_args.index("--delay-ms")
             if delay_idx + 1 >= len(dada_args):
-                print(
-                    "[dada] Error: --delay-ms requires a numeric argument",
-                    file=sys.stderr,
-                )
+                log("Error: --delay-ms requires a numeric argument")
                 sys.exit(1)
             delay_ms = int(dada_args[delay_idx + 1])
             if delay_ms < 0:
-                print("[dada] Error: --delay-ms must be non-negative", file=sys.stderr)
+                log("Error: --delay-ms must be non-negative")
                 sys.exit(1)
         except (ValueError, IndexError):
-            print(
-                "[dada] Error: --delay-ms requires a numeric argument", file=sys.stderr
-            )
+            log("Error: --delay-ms requires a numeric argument")
             sys.exit(1)
 
     try:
@@ -462,9 +433,9 @@ def main() -> None:
             )
         )
     except KeyboardInterrupt:
-        print("\n[dada] Shutting down...", file=sys.stderr, flush=True)
+        log("\nShutting down...")
     except Exception as e:
-        print(f"[dada] Fatal error: {e}", file=sys.stderr, flush=True)
+        log(f"Fatal error: {e}")
         sys.exit(1)
 
 
