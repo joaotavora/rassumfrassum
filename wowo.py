@@ -14,10 +14,37 @@ class LspLogic:
     def __init__(self, primary_server: ServerProcess):
         """Initialize with reference to the primary server."""
         self.primary_server = primary_server
+        # Track document versions: URI -> version number
+        self.document_versions: dict[str, int] = {}
 
     def should_route_to_all(self, method: str) -> bool:
         """Determine if a request should go to all servers."""
         return method in ['initialize', 'shutdown']
+
+    def on_client_notification(self, method: str, params: JSON) -> None:
+        """
+        Handle client notifications to track document state.
+        Updates document version tracking for didOpen, didChange, and didClose.
+        """
+        if method == 'textDocument/didOpen':
+            text_doc = params.get('textDocument', {})
+            uri = text_doc.get('uri')
+            version = text_doc.get('version')
+            if uri is not None and version is not None:
+                self.document_versions[uri] = version
+
+        elif method == 'textDocument/didChange':
+            text_doc = params.get('textDocument', {})
+            uri = text_doc.get('uri')
+            version = text_doc.get('version')
+            if uri is not None and version is not None:
+                self.document_versions[uri] = version
+
+        elif method == 'textDocument/didClose':
+            text_doc = params.get('textDocument', {})
+            uri = text_doc.get('uri')
+            if uri is not None:
+                self.document_versions.pop(uri, None)
 
     def on_server_message(
         self,

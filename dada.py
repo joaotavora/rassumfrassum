@@ -87,7 +87,7 @@ async def run_multiplexer(
         servers.append(server)
 
     # Create message router
-    router = LspLogic(servers[0])
+    logic = LspLogic(servers[0])
 
     # Track ongoing aggregations
     # key -> {expected_count, received_count, id, method, aggregate_payload, timeout_task}
@@ -156,15 +156,16 @@ async def run_multiplexer(
 
                 # Route based on message type
                 if id is None and method is not None:  # notification
-                    # Broadcast all notifications to all servers
+                    # Inform LspLogic and route to all
+                    logic.on_client_notification(method, msg.get("params", {}))
                     for server in servers:
                         await write_lsp_message(server.stdin, msg)
-                elif method is not None:
+                elif method is not None: # request
                     # Track shutdown requests
                     if method == "shutdown":
                         shutting_down = True
                     # Request from client to servers
-                    if router.should_route_to_all(method):
+                    if logic.should_route_to_all(method):
                         # Send to all servers with original ID
                         for server in servers:
                             await write_lsp_message(server.stdin, msg)
@@ -269,7 +270,7 @@ async def run_multiplexer(
                     method = requests_needing_aggregation.get(msg_id)
 
                 # Immediate handling (e.g., server name discovery, source attribution)
-                payload = router.on_server_message(method, cast(JSON, payload), server)
+                payload = logic.on_server_message(method, cast(JSON, payload), server)
 
                 # Check if message needs aggregation
                 needs_aggregation = False
@@ -278,10 +279,10 @@ async def run_multiplexer(
                     # This is a response to a request that was sent to all servers
                     needs_aggregation = True
                     agg_key = ("response", msg_id)
-                elif router.should_aggregate(method):
+                elif logic.should_aggregate(method):
                     # This is a notification that needs aggregation
                     needs_aggregation = True
-                    agg_key = router.get_aggregation_key(method, payload)
+                    agg_key = logic.get_aggregation_key(method, payload)
 
                 if needs_aggregation:
                     agg_state = pending_aggregations.get(agg_key)
@@ -289,7 +290,7 @@ async def run_multiplexer(
                         # Not the first message - aggregate with previous
                         agg_state[
                             "aggregate_payload"
-                        ] = await router.aggregate_payloads(
+                        ] = await logic.aggregate_payloads(
                             agg_state["method"],
                             agg_state["aggregate_payload"],
                             payload,
@@ -299,7 +300,7 @@ async def run_multiplexer(
                     else:
                         timeout_task = asyncio.create_task(
                             asyncio.sleep(
-                                router.get_aggregation_timeout_ms(method) / 1000.0
+                                logic.get_aggregation_timeout_ms(method) / 1000.0
                             )
                         )
                         agg_state = {
