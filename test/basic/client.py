@@ -15,7 +15,17 @@ from jsonrpc import read_message_sync
 def main():
     """Send a sequence of LSP messages."""
 
-    do_initialize()
+    init_response = do_initialize()
+
+    # Verify merged serverInfo
+    result = init_response['result']
+    assert 'serverInfo' in result, f"Expected 'serverInfo' in result: {result}"
+    server_info = result['serverInfo']
+    # Order depends on which server responds first
+    assert server_info.get('name') in ['s1+s2', 's2+s1'], \
+        f"Expected merged name 's1+s2' or 's2+s1', got '{server_info.get('name')}'"
+    log("client", f"Verified merged server name: {server_info['name']}")
+
     do_initialized()
 
     send_and_log({
