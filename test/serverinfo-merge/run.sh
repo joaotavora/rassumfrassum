@@ -1,5 +1,13 @@
 #!/bin/bash
-source "$(dirname "$0")/../run-test.sh"
+set -e
+set -o pipefail
+cd $(dirname "$0")
 
-run_test -- python "$SERVER" --name s1 --version 1.0.0 \
-         -- python "$SERVER" --name s2 --version 2.0.0
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+trap "rm -f '$FIFO'" EXIT INT TERM
+
+./client.py < "$FIFO" | ./../../dada.py \
+         -- python ./server.py --name s1 --version 1.0.0 \
+         -- python ./server.py --name s2 --version 2.0.0 \
+> "$FIFO"

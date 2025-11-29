@@ -1,7 +1,16 @@
 #!/bin/bash
-source "$(dirname "$0")/../run-test.sh"
+set -e
+set -o pipefail
+cd $(dirname "$0")
 
 # s1: 1500ms delay (exceeds 1000ms timeout, diagnostics discarded)
 # s2: immediate diagnostics
-run_test -- python "$SERVER" --name s1 --publish-diagnostics --delay-diagnostics 1500 \
-         -- python "$SERVER" --name s2 --publish-diagnostics
+
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+trap "rm -f '$FIFO'" EXIT INT TERM
+
+./client.py < "$FIFO" | ./../../dada.py \
+         -- python ./server.py --name s1 --delay-diagnostics 1500 \
+         -- python ./server.py --name s2 \
+> "$FIFO"

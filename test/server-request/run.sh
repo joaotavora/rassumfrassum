@@ -1,5 +1,13 @@
 #!/bin/bash
-source "$(dirname "$0")/../run-test.sh"
+set -e
+set -o pipefail
+cd $(dirname "$0")
 
-run_test -- python "$SERVER" --name s1 --send-request-after-init \
-         -- python "$SERVER" --name s2 --send-request-after-init
+FIFO=$(mktemp -u)
+mkfifo "$FIFO"
+trap "rm -f '$FIFO'" EXIT INT TERM
+
+./client.py < "$FIFO" | ./../../dada.py \
+         -- python ./server.py --name s1 --send-request-after-init \
+         -- python ./server.py --name s2 --send-request-after-init \
+> "$FIFO"
