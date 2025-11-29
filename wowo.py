@@ -127,28 +127,14 @@ class MessageRouter:
         new_info = payload.get('serverInfo', {})
 
         if new_info:
-            merged_info = {}
+            def merge_field(field: str, sep: str) -> str:
+                current = current_info.get(field, '')
+                new = new_info.get(field, '')
+                return f"{current}{sep}{new}" if current and new else new or current
 
-            # Concatenate names with '+'
-            current_name = current_info.get('name', '')
-            new_name = new_info.get('name', '')
-            if current_name and new_name:
-                merged_info['name'] = f"{current_name}+{new_name}"
-            elif new_name:
-                merged_info['name'] = new_name
-            elif current_name:
-                merged_info['name'] = current_name
-
-            # Concatenate versions with ','
-            current_version = current_info.get('version', '')
-            new_version = new_info.get('version', '')
-            if current_version and new_version:
-                merged_info['version'] = f"{current_version},{new_version}"
-            elif new_version:
-                merged_info['version'] = new_version
-            elif current_version:
-                merged_info['version'] = current_version
-
-            result['serverInfo'] = merged_info
+            result['serverInfo'] = {
+                'name': merge_field('name', '+'),
+                'version': merge_field('version', ',')
+            }
 
         return result
