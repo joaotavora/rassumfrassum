@@ -21,9 +21,9 @@ def main():
     result = init_response['result']
     assert 'serverInfo' in result, f"Expected 'serverInfo' in result: {result}"
     server_info = result['serverInfo']
-    # Order depends on which server responds first
-    assert server_info.get('name') in ['s1+s2', 's2+s1'], \
-        f"Expected merged name 's1+s2' or 's2+s1', got '{server_info.get('name')}'"
+    # Primary server should always come first
+    assert server_info.get('name') == 's1+s2', \
+        f"Expected merged name 's1+s2', got '{server_info.get('name')}'"
     log("client", f"Verified merged server name: {server_info['name']}")
 
     do_initialized()

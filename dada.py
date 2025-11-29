@@ -8,7 +8,7 @@ import asyncio
 import sys
 import os
 
-from wowo import MessageRouter
+from wowo import LspLogic
 from jsonrpc import (
     read_message as read_lsp_message,
     write_message as write_lsp_message,
@@ -92,7 +92,7 @@ async def run_multiplexer(
         servers.append(server)
 
     # Create message router
-    router = MessageRouter()
+    router = LspLogic(servers[0])
 
     # Track ongoing aggregations
     # key -> {expected_count, received_count, id, method, aggregate_payload, timeout_task}

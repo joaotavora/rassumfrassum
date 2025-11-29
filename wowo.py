@@ -5,11 +5,15 @@ LSP-specific message routing and merging logic.
 from jsonrpc import JSON
 from server_process import ServerProcess
 
-class MessageRouter:
+class LspLogic:
     """
     Routes LSP messages between client and multiple servers.
     Handles request routing and response merging.
     """
+
+    def __init__(self, primary_server: ServerProcess):
+        """Initialize with reference to the primary server."""
+        self.primary_server = primary_server
 
     def should_route_to_all(self, method: str) -> bool:
         """Determine if a request should go to all servers."""
@@ -80,8 +84,8 @@ class MessageRouter:
         """
         if method == 'textDocument/publishDiagnostics':
             # Merge diagnostics
-            current_diags = aggregate.get('diagnostics', [])
-            new_diags = payload.get('diagnostics', [])
+            current_diags = aggregate.get('diagnostics', []);
+            new_diags = payload.get('diagnostics', []);
 
             # Add source to new diagnostics
             for diag in new_diags:
@@ -130,7 +134,19 @@ class MessageRouter:
             def merge_field(field: str, sep: str) -> str:
                 current = current_info.get(field, '')
                 new = new_info.get(field, '')
-                return f"{current}{sep}{new}" if current and new else new or current
+
+                if not (current and new):
+                    return new or current
+
+                # Check if we need to swap to ensure primary comes first
+                current_is_primary = current_info.get('name') == self.primary_server.name
+                new_is_primary = source == self.primary_server
+
+                # If new is primary but current isn't, swap order
+                if new_is_primary and not current_is_primary:
+                    return f"{new}{sep}{current}"
+                else:
+                    return f"{current}{sep}{new}"
 
             result['serverInfo'] = {
                 'name': merge_field('name', '+'),
