@@ -2,8 +2,6 @@
 LSP-specific message routing and merging logic.
 """
 
-import asyncio
-from typing import Any
 from jsonrpc import JSON
 from server_process import ServerProcess
 
@@ -12,22 +10,6 @@ class MessageRouter:
     Routes LSP messages between client and multiple servers.
     Handles request routing and response merging.
     """
-
-    def __init__(self, server_names: list[str]):
-        """
-        Initialize router with server names.
-        First server is primary, rest are secondary.
-        """
-        self.server_names : list[str] = server_names
-        self.primary_name : str = server_names[0]
-        self.secondary_names : list[str] = server_names[1:] if len(server_names) > 1 else []
-
-        # Track requests that need response merging
-        # message_key -> {method: str, messages: {server_name: message}, expected_count: int}
-        self.pending_aggregations : dict[Any, dict[str, Any]]= {}  # pyright: ignore[reportExplicitAny]
-
-        # For notifications without IDs, we generate transient keys
-        self.notification_key_counter = 0
 
     def should_route_to_all(self, method: str) -> bool:
         """Determine if a request should go to all servers."""
