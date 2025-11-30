@@ -199,8 +199,9 @@ class LspLogic:
         # Merge textDocumentSync capability.  If one server only
         # supports full text, then be it  ¯\_(ツ)_/¯
         if 'textDocumentSync' in current_caps or 'textDocumentSync' in new_caps:
-            probe = new_caps.get('textDocumentSync')
-            if probe and probe == 1:
+            current_sync = current_caps.get('textDocumentSync')
+            new_sync = new_caps.get('textDocumentSync')
+            if current_sync == 1 or new_sync == 1:
                 merged_caps['textDocumentSync'] = 1
 
         aggregate['capabilities'] = merged_caps
