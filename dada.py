@@ -336,6 +336,7 @@ async def run_multiplexer(
                     payload = logic.on_server_notification(
                         method, cast(JSON, payload), proc.server
                     )
+                    is_error = False
                 else:
                     # Response - lookup method and params from request tracking
                     request_info = requests_needing_aggregation.get(msg_id)
@@ -379,6 +380,7 @@ async def run_multiplexer(
                             agg_state["aggregate_payload"],
                             payload,
                             proc.server,
+                            is_error,
                         )
                         agg_state["received_count"] += 1
                     else:

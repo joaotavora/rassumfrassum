@@ -178,12 +178,16 @@ class LspLogic:
         method: str,
         aggregate: JSON,
         payload: JSON,
-        source: Server
-    ) -> JSON:
+        source: Server,
+        is_error: bool
+    ) -> JSON | list:
         """
         Aggregate a new payload with the current aggregate.
         Returns the new aggregate payload.
         """
+        # Don't aggregate error responses, just skip them
+        if is_error:
+            return aggregate
         if method == 'textDocument/publishDiagnostics':
             # Merge diagnostics
             current_diags = aggregate.get('diagnostics', [])
