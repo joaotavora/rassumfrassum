@@ -4,27 +4,14 @@ LSP-specific message routing and merging logic.
 
 import asyncio
 from dataclasses import dataclass
-from jsonrpc import JSON
+from jaja import JSON
 
 
 @dataclass
 class Server:
-    """Information about a running server subprocess."""
+    """Information about a logical LSP server."""
     name: str
-    process: asyncio.subprocess.Process
     capabilities: JSON | None = None
-
-    @property
-    def stdin(self) -> asyncio.StreamWriter:
-        return self.process.stdin  # pyright: ignore[reportReturnType]
-
-    @property
-    def stdout(self) -> asyncio.StreamReader:
-        return self.process.stdout  # pyright: ignore[reportReturnType]
-
-    @property
-    def stderr(self) -> asyncio.StreamReader:
-        return self.process.stderr  # pyright: ignore[reportReturnType]
 
 class LspLogic:
     """

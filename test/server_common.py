@@ -11,7 +11,7 @@ from typing import Callable, cast
 project_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_dir))
 
-from jsonrpc import JSON, read_message_sync, write_message_sync
+from jaja import JSON, read_message_sync, write_message_sync
 
 def log(prefix: str, s: str):
     print(f"{s}", file=sys.stderr)

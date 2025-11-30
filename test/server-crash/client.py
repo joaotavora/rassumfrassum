@@ -10,7 +10,7 @@ test_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(test_dir))
 
 from client_common import do_initialize, do_initialized, log
-from jsonrpc import read_message_sync
+from jaja import read_message_sync
 
 def main():
     """Send initialize and initialized, then expect connection to die."""

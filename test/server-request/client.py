@@ -10,7 +10,7 @@ test_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(test_dir))
 
 from client_common import do_initialize, do_initialized, do_shutdown, send_and_log, log
-from jsonrpc import read_message_sync, write_message_sync
+from jaja import read_message_sync, write_message_sync
 
 def main():
     """Send a sequence of LSP messages and handle server requests."""

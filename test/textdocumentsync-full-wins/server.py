@@ -10,7 +10,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from jsonrpc import read_message_sync, write_message_sync
+from jaja import read_message_sync, write_message_sync
 import argparse
 
 parser = argparse.ArgumentParser()

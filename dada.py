@@ -10,12 +10,37 @@ import os
 import sys
 
 from wowo import LspLogic, Server
-from jsonrpc import (
+from jaja import (
     read_message as read_lsp_message,
     write_message as write_lsp_message,
     JSON,
 )
 from typing import cast
+from dataclasses import dataclass
+
+
+@dataclass
+class InferiorProcess:
+    """A server subprocess and its associated logical server info."""
+    process: asyncio.subprocess.Process
+    server: Server
+
+    @property
+    def stdin(self) -> asyncio.StreamWriter:
+        return self.process.stdin  # pyright: ignore[reportReturnType]
+
+    @property
+    def stdout(self) -> asyncio.StreamReader:
+        return self.process.stdout  # pyright: ignore[reportReturnType]
+
+    @property
+    def stderr(self) -> asyncio.StreamReader:
+        return self.process.stderr  # pyright: ignore[reportReturnType]
+
+    @property
+    def name(self) -> str:
+        """Convenience property to access server name."""
+        return self.server.name
 
 
 def log(s: str):
@@ -39,24 +64,24 @@ def log_message(direction: str, message: JSON) -> None:
     log(f"{direction} {msg_type} {json_str}")
 
 
-async def forward_server_stderr(server: Server) -> None:
+async def forward_server_stderr(proc: InferiorProcess) -> None:
     """
     Forward server's stderr to our stderr, with appropriate prefixing.
     """
     try:
         while True:
-            line = await server.stderr.readline()
+            line = await proc.stderr.readline()
             if not line:
                 break
 
             # Decode and strip only the trailing newline (preserve other whitespace)
             line_str = line.decode("utf-8", errors="replace").rstrip("\n\r")
-            log(f"[{server.name}] {line_str}")
+            log(f"[{proc.name}] {line_str}")
     except Exception as e:
-        log(f"[{server.name}] Error reading stderr: {e}")
+        log(f"[{proc.name}] Error reading stderr: {e}")
 
 
-async def launch_server(server_command: list[str], server_index: int) -> Server:
+async def launch_server(server_command: list[str], server_index: int) -> InferiorProcess:
     """Launch a single LSP server subprocess."""
     basename = os.path.basename(server_command[0])
     # Make name unique by including index for multiple servers
@@ -70,7 +95,8 @@ async def launch_server(server_command: list[str], server_index: int) -> Server:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    return Server(name=name, process=process)
+    server = Server(name=name)
+    return InferiorProcess(process=process, server=server)
 
 
 async def run_multiplexer(
@@ -83,13 +109,13 @@ async def run_multiplexer(
     quiet_server = opts.quiet_server
     delay_ms = opts.delay_ms
     # Launch all servers
-    servers: list[Server] = []
+    procs: list[InferiorProcess] = []
     for i, cmd in enumerate(server_commands):
-        server = await launch_server(cmd, i)
-        servers.append(server)
+        p = await launch_server(cmd, i)
+        procs.append(p)
 
     # Create message router
-    logic = LspLogic(servers[0])
+    logic = LspLogic(procs[0].server)
 
     # Track ongoing aggregations
     # key -> {expected_count, received_count, id, method, aggregate_payload, timeout_task}
@@ -106,9 +132,9 @@ async def run_multiplexer(
     # Track shutdown state
     shutting_down = False
 
-    log(f"Primary server: {servers[0].name}")
-    if len(servers) > 1:
-        secondaries = [s.name for s in servers[1:]]
+    log(f"Primary server: {procs[0].name}")
+    if len(procs) > 1:
+        secondaries = [i.name for i in procs[1:]]
         log(f"Secondary servers: {', '.join(secondaries)}")
     if delay_ms > 0:
         log(f"Delaying server responses by {delay_ms}ms")
@@ -173,8 +199,8 @@ async def run_multiplexer(
                             for key in keys_to_remove:
                                 del pending_aggregations[key]
 
-                    for server in servers:
-                        await write_lsp_message(server.stdin, msg)
+                    for p in procs:
+                        await write_lsp_message(p.stdin, msg)
                 elif method is not None: # request
                     # Inform LspLogic
                     params = msg.get("params", {})
@@ -185,21 +211,21 @@ async def run_multiplexer(
                     # Request from client to servers
                     if logic.should_route_to_all(method):
                         # Send to all servers with original ID
-                        for server in servers:
-                            await write_lsp_message(server.stdin, msg)
-                            log_message(f"[{server.name}] -->", msg)
+                        for p in procs:
+                            await write_lsp_message(p.stdin, msg)
+                            log_message(f"[{p.name}] -->", msg)
 
                         # Track that this request needs aggregation
                         requests_needing_aggregation[id] = (method, cast(JSON, params))
                     else:
                         # Send only to primary server with original ID
-                        await write_lsp_message(servers[0].stdin, msg)
-                        log_message(f"[{servers[0].name}] -->", msg)
+                        await write_lsp_message(procs[0].stdin, msg)
+                        log_message(f"[{procs[0].name}] -->", msg)
                 else:
                     # Response from client (to a server request)
                     if id in server_request_mapping:
                         # This is a response to a server request - remap ID and route to correct server
-                        original_id, target_server, req_method, req_params = server_request_mapping[id]
+                        original_id, target_proc, req_method, req_params = server_request_mapping[id]
                         del server_request_mapping[id]
 
                         # Inform LspLogic
@@ -210,14 +236,14 @@ async def run_multiplexer(
                             req_params,
                             cast(JSON, response_payload),
                             is_error,
-                            target_server
+                            target_proc.server
                         )
 
                         # Remap ID back to original
                         remapped_msg = msg.copy()
                         remapped_msg["id"] = original_id
-                        await write_lsp_message(target_server.stdin, remapped_msg)
-                        log_message(f"[{target_server.name}] -->", remapped_msg)
+                        await write_lsp_message(target_proc.stdin, remapped_msg)
+                        log_message(f"[{target_proc.name}] -->", remapped_msg)
                     else:
                         # Unknown response, log error
                         log(
@@ -228,9 +254,9 @@ async def run_multiplexer(
             log(f"Error handling client messages: {e}")
         finally:
             # Close all server stdin
-            for server in servers:
-                server.stdin.close()
-                await server.stdin.wait_closed()
+            for p in procs:
+                p.stdin.close()
+                await p.stdin.wait_closed()
 
     def reconstruct_message(agg_state) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
@@ -257,20 +283,20 @@ async def run_multiplexer(
             await send_to_client(final_msg)
             agg_state["dispatched"] = True
 
-    async def handle_server_messages(server: Server):
+    async def handle_server_messages(proc: InferiorProcess):
         """Read from a server and route back to client."""
         nonlocal next_remapped_id
         try:
             while True:
-                msg = await read_lsp_message(server.stdout)
+                msg = await read_lsp_message(proc.stdout)
                 if msg is None:
                     # Server died - check if this was expected
                     if not shutting_down:
-                        log(f"Error: Server {server.name} died unexpectedly")
-                        raise RuntimeError(f"Server {server.name} crashed")
+                        log(f"Error: Server {proc.name} died unexpectedly")
+                        raise RuntimeError(f"Server {proc.name} crashed")
                     break
 
-                log_message(f"[{server.name}] <--", msg)
+                log_message(f"[{proc.name}] <--", msg)
 
                 # Distinguish message types
                 msg_id = msg.get("id")
@@ -280,13 +306,13 @@ async def run_multiplexer(
                 if method is not None and msg_id is not None:
                     # Handle server request
                     params = msg.get("params", {})
-                    logic.on_server_request(method, cast(JSON, params), server)
+                    logic.on_server_request(method, cast(JSON, params), proc.server)
 
                     # This is a request from server to client - remap ID
                     remapped_id = next_remapped_id
                     next_remapped_id += 1
                     server_request_mapping[remapped_id] = (
-                        msg_id, server, method, cast(JSON, params)
+                        msg_id, proc, method, cast(JSON, params)
                     )
 
                     # Forward to client with remapped ID
@@ -300,7 +326,7 @@ async def run_multiplexer(
                     # Notification - payload is params
                     payload = msg.get("params", {})
                     payload = logic.on_server_notification(
-                        method, cast(JSON, payload), server
+                        method, cast(JSON, payload), proc.server
                     )
                 else:
                     # Response - lookup method and params from request tracking
@@ -313,7 +339,7 @@ async def run_multiplexer(
                     is_error = "error" in msg
                     payload = msg.get("error") if is_error else msg.get("result")
                     payload = logic.on_server_response(
-                        method, cast(JSON, req_params), cast(JSON, payload), is_error, server
+                        method, cast(JSON, req_params), cast(JSON, payload), is_error, proc.server
                     )
 
                 # Check if message needs aggregation
@@ -327,7 +353,7 @@ async def run_multiplexer(
 
                 # Check if logic wants us to drop this message
                 if aggregation_key == ("drop",):
-                    log(f"Dropping message from {server.name}: {method}")
+                    log(f"Dropping message from {proc.name}: {method}")
                     continue
 
                 if aggregation_key is not None:
@@ -335,7 +361,7 @@ async def run_multiplexer(
                     if agg_state:
                         # Drop if already dispatched
                         if agg_state["dispatched"]:
-                            log(f"Dropping tardy message from {server.name}: {method}")
+                            log(f"Dropping tardy message from {proc.name}: {method}")
                             continue
                         # Not the first message - aggregate with previous
                         agg_state[
@@ -344,7 +370,7 @@ async def run_multiplexer(
                             agg_state["method"],
                             agg_state["aggregate_payload"],
                             payload,
-                            server,
+                            proc.server,
                         )
                         agg_state["received_count"] += 1
                     else:
@@ -354,7 +380,7 @@ async def run_multiplexer(
                             )
                         )
                         agg_state = {
-                            "expected_count": len(servers),
+                            "expected_count": len(procs),
                             "received_count": 1,
                             "id": msg_id,
                             "method": method,
@@ -392,19 +418,19 @@ async def run_multiplexer(
             # Server crashed - re-raise to propagate to main
             raise
         except Exception as e:
-            log(f"Error handling messages from {server.name}: {e}")
+            log(f"Error handling messages from {proc.name}: {e}")
         finally:
             pass
 
     # Create all tasks
     tasks = [handle_client_messages()]
 
-    for server in servers:
-        tasks.append(handle_server_messages(server))
+    for p in procs:
+        tasks.append(handle_server_messages(p))
 
         # Forward stderr
         if not quiet_server:
-            tasks.append(forward_server_stderr(server))
+            tasks.append(forward_server_stderr(p))
 
     try:
         await asyncio.gather(*tasks)
@@ -414,8 +440,8 @@ async def run_multiplexer(
         sys.exit(1)
 
     # Wait for all servers to exit
-    for server in servers:
-        _ = await server.process.wait()
+    for p in procs:
+        _ = await p.process.wait()
 
 
 def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
