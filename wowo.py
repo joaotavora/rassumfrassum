@@ -152,7 +152,7 @@ class LspLogic:
             return 1000  # 1 second for diagnostics
 
         # Default for responses
-        return 5000  # 5 seconds
+        return 2000  # 2 seconds
 
     async def aggregate_payloads(
         self,
