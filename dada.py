@@ -161,6 +161,19 @@ async def run_multiplexer(
                 if id is None and method is not None:  # notification
                     # Inform LspLogic and route to all
                     logic.on_client_notification(method, msg.get("params", {}))
+
+                    # FIXME: This breaks abstraction - dada.py should not know about LSP-specific methods.
+                    # We should refactor this so wowo.py tells us which aggregations to clean up.
+                    # Clean up old aggregations for updated documents
+                    if method in ('textDocument/didOpen', 'textDocument/didChange'):
+                        params = msg.get("params", {})
+                        uri = params.get('textDocument', {}).get('uri')
+                        if uri:
+                            keys_to_remove = [k for k in pending_aggregations.keys()
+                                            if isinstance(k, tuple) and len(k) >= 3 and k[2] == uri]
+                            for key in keys_to_remove:
+                                del pending_aggregations[key]
+
                     for server in servers:
                         await write_lsp_message(server.stdin, msg)
                 elif method is not None: # request
@@ -243,7 +256,7 @@ async def run_multiplexer(
         if agg_state and agg_state["aggregate_payload"] is not None:
             final_msg = reconstruct_message(agg_state)
             await send_to_client(final_msg)
-            del pending_aggregations[agg_key]
+            agg_state["dispatched"] = True
 
     async def handle_server_messages(server: ServerProcess):
         """Read from a server and route back to client."""
@@ -313,9 +326,18 @@ async def run_multiplexer(
                     # Check if this notification needs aggregation
                     aggregation_key = logic.get_aggregation_key(method, payload)
 
+                # Check if logic wants us to drop this message
+                if aggregation_key == ("drop",):
+                    log(f"Dropping message from {server.name}: {method}")
+                    continue
+
                 if aggregation_key is not None:
                     agg_state = pending_aggregations.get(aggregation_key)
                     if agg_state:
+                        # Drop if already dispatched
+                        if agg_state["dispatched"]:
+                            log(f"Dropping tardy message from {server.name}: {method}")
+                            continue
                         # Not the first message - aggregate with previous
                         agg_state[
                             "aggregate_payload"
@@ -339,6 +361,7 @@ async def run_multiplexer(
                             "method": method,
                             "aggregate_payload": payload,
                             "timeout_task": timeout_task,
+                            "dispatched": False,
                         }
                         pending_aggregations[aggregation_key] = agg_state
 
@@ -358,7 +381,7 @@ async def run_multiplexer(
                         # Send aggregated result to client
                         final_msg = reconstruct_message(agg_state)
                         await send_to_client(final_msg)
-                        del pending_aggregations[aggregation_key]
+                        agg_state["dispatched"] = True
                         # Remove from requests needing aggregation if it's a response
                         if msg_id is not None:
                             requests_needing_aggregation.pop(msg_id, None)

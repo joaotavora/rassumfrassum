@@ -117,11 +117,20 @@ class LspLogic:
         """
         Get aggregation key for notifications that need aggregation.
         Returns None if this notification doesn't need aggregation.
+        Returns ("drop",) if message should be dropped (stale version).
         """
         if method == 'textDocument/publishDiagnostics':
-            # Notification: use method + URI
             uri = payload.get('uri', '')
-            return ('notification', method, uri)
+            version = payload.get('version')
+
+            if uri in self.document_versions:
+                tracked_version = self.document_versions[uri]
+                if version is None:
+                    version = tracked_version
+                elif version < tracked_version:
+                    return ("drop",)
+
+            return ('notification', method, uri, version or 0)
 
         return None
 

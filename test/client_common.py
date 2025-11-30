@@ -3,6 +3,7 @@ Common test utilities for LSP client tests.
 """
 
 import sys
+import select
 from pathlib import Path
 
 # Add project root to path
@@ -64,3 +65,14 @@ def do_shutdown():
     }, "Sending exit notification")
 
     log("client", "done!")
+
+def assert_no_message_pending(timeout_sec: float = 0.1):
+    """
+    Assert that no message is available on stdin within timeout.
+    Raises assertion error if a message is available.
+    """
+    readable, _, _ = select.select([sys.stdin.buffer], [], [], timeout_sec)
+    if readable:
+        msg = read_message_sync()
+        raise AssertionError(f"Unexpected message received (should have been dropped): {msg}")
+    log("client", f"Verified no message pending (waited {timeout_sec}s)")
