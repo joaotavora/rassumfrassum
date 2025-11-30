@@ -25,9 +25,28 @@ class LspLogic:
         # Track document versions: URI -> version number
         self.document_versions: dict[str, int] = {}
 
-    def should_route_to_all(self, method: str) -> bool:
-        """Determine if a request should go to all servers."""
-        return method in ['initialize', 'shutdown']
+    def should_route_to_server(
+        self,
+        method: str,
+        params: JSON,
+        server: Server
+    ) -> bool | str:
+        """
+        Determine if a request should be routed to this server.
+
+        Returns:
+            True: Route to this server, continue asking remaining servers
+            False: Don't route to this server, continue asking remaining servers
+            "stop": Route to this server, STOP asking remaining servers
+
+        Servers are queried in order (primary first).
+        """
+        # initialize and shutdown go to all servers
+        if method in ['initialize', 'shutdown']:
+            return True
+
+        # Default: only primary server handles requests
+        return server == self.primary_server and "stop"
 
     def on_client_request(self, method: str, params: JSON) -> None:
         """

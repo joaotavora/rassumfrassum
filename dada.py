@@ -209,18 +209,26 @@ async def run_multiplexer(
                     if method == "shutdown":
                         shutting_down = True
                     # Request from client to servers
-                    if logic.should_route_to_all(method):
-                        # Send to all servers with original ID
-                        for p in procs:
-                            await write_lsp_message(p.stdin, msg)
-                            log_message(f"[{p.name}] -->", msg)
+                    # Determine which servers to route to
+                    target_procs = []
+                    for proc in procs:  # procs is already ordered with primary first
+                        decision = logic.should_route_to_server(method, params, proc.server)
 
-                        # Track that this request needs aggregation
-                        requests_needing_aggregation[id] = (method, cast(JSON, params))
-                    else:
-                        # Send only to primary server with original ID
-                        await write_lsp_message(procs[0].stdin, msg)
-                        log_message(f"[{procs[0].name}] -->", msg)
+                        if decision == "stop":
+                            target_procs.append(proc)
+                            break  # Early termination
+                        elif decision is True:
+                            target_procs.append(proc)
+                        # decision is False: skip this server, continue
+
+                    # Send to selected servers
+                    for p in target_procs:
+                        await write_lsp_message(p.stdin, msg)
+                        log_message(f"[{p.name}] -->", msg)
+
+                    # Track for aggregation if multiple servers
+                    if len(target_procs) > 1:
+                        requests_needing_aggregation[id] = (method, cast(JSON, params), len(target_procs))
                 else:
                     # Response from client (to a server request)
                     if id in server_request_mapping:
@@ -332,9 +340,9 @@ async def run_multiplexer(
                     # Response - lookup method and params from request tracking
                     request_info = requests_needing_aggregation.get(msg_id)
                     if request_info:
-                        method, req_params = request_info
+                        method, req_params, expected_count = request_info
                     else:
-                        method, req_params = None, {}
+                        method, req_params, expected_count = None, {}, len(procs)
 
                     is_error = "error" in msg
                     payload = msg.get("error") if is_error else msg.get("result")
@@ -380,7 +388,7 @@ async def run_multiplexer(
                             )
                         )
                         agg_state = {
-                            "expected_count": len(procs),
+                            "expected_count": expected_count,
                             "received_count": 1,
                             "id": msg_id,
                             "method": method,
