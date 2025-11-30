@@ -9,13 +9,12 @@ import json
 import os
 import sys
 
-from wowo import LspLogic
+from wowo import LspLogic, Server
 from jsonrpc import (
     read_message as read_lsp_message,
     write_message as write_lsp_message,
     JSON,
 )
-from server_process import ServerProcess
 from typing import cast
 
 
@@ -40,7 +39,7 @@ def log_message(direction: str, message: JSON) -> None:
     log(f"{direction} {msg_type} {json_str}")
 
 
-async def forward_server_stderr(server: ServerProcess) -> None:
+async def forward_server_stderr(server: Server) -> None:
     """
     Forward server's stderr to our stderr, with appropriate prefixing.
     """
@@ -57,7 +56,7 @@ async def forward_server_stderr(server: ServerProcess) -> None:
         log(f"[{server.name}] Error reading stderr: {e}")
 
 
-async def launch_server(server_command: list[str], server_index: int) -> ServerProcess:
+async def launch_server(server_command: list[str], server_index: int) -> Server:
     """Launch a single LSP server subprocess."""
     basename = os.path.basename(server_command[0])
     # Make name unique by including index for multiple servers
@@ -71,7 +70,7 @@ async def launch_server(server_command: list[str], server_index: int) -> ServerP
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    return ServerProcess(name=name, process=process)
+    return Server(name=name, process=process)
 
 
 async def run_multiplexer(
@@ -84,7 +83,7 @@ async def run_multiplexer(
     quiet_server = opts.quiet_server
     delay_ms = opts.delay_ms
     # Launch all servers
-    servers: list[ServerProcess] = []
+    servers: list[Server] = []
     for i, cmd in enumerate(server_commands):
         server = await launch_server(cmd, i)
         servers.append(server)
@@ -258,7 +257,7 @@ async def run_multiplexer(
             await send_to_client(final_msg)
             agg_state["dispatched"] = True
 
-    async def handle_server_messages(server: ServerProcess):
+    async def handle_server_messages(server: Server):
         """Read from a server and route back to client."""
         nonlocal next_remapped_id
         try:

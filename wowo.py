@@ -2,8 +2,29 @@
 LSP-specific message routing and merging logic.
 """
 
+import asyncio
+from dataclasses import dataclass
 from jsonrpc import JSON
-from server_process import ServerProcess
+
+
+@dataclass
+class Server:
+    """Information about a running server subprocess."""
+    name: str
+    process: asyncio.subprocess.Process
+    capabilities: JSON | None = None
+
+    @property
+    def stdin(self) -> asyncio.StreamWriter:
+        return self.process.stdin  # pyright: ignore[reportReturnType]
+
+    @property
+    def stdout(self) -> asyncio.StreamReader:
+        return self.process.stdout  # pyright: ignore[reportReturnType]
+
+    @property
+    def stderr(self) -> asyncio.StreamReader:
+        return self.process.stderr  # pyright: ignore[reportReturnType]
 
 class LspLogic:
     """
@@ -11,7 +32,7 @@ class LspLogic:
     Handles request routing and response merging.
     """
 
-    def __init__(self, primary_server: ServerProcess):
+    def __init__(self, primary_server: Server):
         """Initialize with reference to the primary server."""
         self.primary_server = primary_server
         # Track document versions: URI -> version number
@@ -57,7 +78,7 @@ class LspLogic:
         request_params: JSON,
         response_payload: JSON,
         is_error: bool,
-        server: ServerProcess
+        server: Server
     ) -> None:
         """
         Handle client responses to server requests.
@@ -68,7 +89,7 @@ class LspLogic:
         self,
         method: str,
         params: JSON,
-        source: ServerProcess
+        source: Server
     ) -> None:
         """
         Handle server requests to the client.
@@ -79,7 +100,7 @@ class LspLogic:
         self,
         method: str,
         params: JSON,
-        source: ServerProcess
+        source: Server
     ) -> JSON:
         """
         Handle server notifications.
@@ -101,15 +122,17 @@ class LspLogic:
         request_params: JSON,
         response_payload: JSON,
         is_error: bool,
-        server: ServerProcess
+        server: Server
     ) -> JSON:
         """
         Handle server responses.
         Returns the (potentially modified) response_payload.
         """
-        # Extract server name from initialize response
-        if method == 'initialize' and not is_error and 'name' in response_payload.get('serverInfo', {}):
-            server.name = response_payload['serverInfo']['name']
+        # Extract server name and capabilities from initialize response
+        if method == 'initialize' and not is_error:
+            if 'name' in response_payload.get('serverInfo', {}):
+                server.name = response_payload['serverInfo']['name']
+            server.capabilities = response_payload.get('capabilities')
 
         return response_payload
 
@@ -149,7 +172,7 @@ class LspLogic:
         method: str,
         aggregate: JSON,
         payload: JSON,
-        source: ServerProcess
+        source: Server
     ) -> JSON:
         """
         Aggregate a new payload with the current aggregate.
@@ -183,7 +206,7 @@ class LspLogic:
         self,
         aggregate: JSON,
         payload: JSON,
-        source: ServerProcess
+        source: Server
     ) -> JSON:
         """Merge initialize response payloads (result objects)."""
 
