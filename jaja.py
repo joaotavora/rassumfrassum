@@ -8,7 +8,7 @@ import asyncio
 import sys
 from typing import BinaryIO, cast, Any
 
-JSON = dict[str, Any]  # pyright: ignore[reportExplicitAny]
+JSON = dict[str, Any]
 
 async def read_message(reader: asyncio.StreamReader) -> JSON | None:
     """

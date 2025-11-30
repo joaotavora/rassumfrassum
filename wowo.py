@@ -2,9 +2,10 @@
 LSP-specific message routing and merging logic.
 """
 
-import asyncio
+import asyncio # becasue reaons
 from dataclasses import dataclass
 from jaja import JSON
+from typing import cast
 
 
 @dataclass
@@ -44,6 +45,16 @@ class LspLogic:
         # initialize and shutdown go to all servers
         if method in ['initialize', 'shutdown']:
             return True
+
+        # Route textDocument/codeAction to every server with codeActionProvider
+        if method == 'textDocument/codeAction':
+            caps = server.capabilities or {}
+            return True if caps.get('codeActionProvider') else False
+
+        # Route textDocument/rename to first server with renameProvider
+        if method == 'textDocument/rename':
+            caps = server.capabilities or {}
+            return "stop" if caps.get('renameProvider') else False
 
         # Default: only primary server handles requests
         return server == self.primary_server and "stop"
@@ -138,7 +149,8 @@ class LspLogic:
         if method == 'initialize' and not is_error:
             if 'name' in response_payload.get('serverInfo', {}):
                 server.name = response_payload['serverInfo']['name']
-            server.capabilities = response_payload.get('capabilities')
+            caps = response_payload.get('capabilities')
+            server.capabilities = caps.copy() if caps else None
 
         return response_payload
 
@@ -201,6 +213,9 @@ class LspLogic:
             # Combine diagnostics
             aggregate['diagnostics'] = current_diags + new_diags
             return aggregate
+        elif method == 'textDocument/codeAction':
+            # Merge code actions - just concatenate
+            return (cast(list, aggregate) or []) + (cast(list, payload) or [])
         elif method == 'initialize':
             # Merge capabilities
             return await self._merge_initialize_payloads(
@@ -223,19 +238,21 @@ class LspLogic:
         # Determine if this response is from primary
         primary_payload = source == self.primary_server
 
-        # Merge capabilities.  Be very naive and almost always use the
-        # primary server's capabilities
-        current_caps = aggregate.get('capabilities', {})
+        # Merge capabilities by iterating through all keys
+        merged_caps = aggregate.get('capabilities', {})
         new_caps = payload.get('capabilities', {})
-        merged_caps = new_caps if primary_payload else current_caps
-
-        # Merge textDocumentSync capability.  If one server only
-        # supports full text, then be it  ¯\_(ツ)_/¯
-        if 'textDocumentSync' in current_caps or 'textDocumentSync' in new_caps:
-            current_sync = current_caps.get('textDocumentSync')
-            new_sync = new_caps.get('textDocumentSync')
-            if current_sync == 1 or new_sync == 1:
-                merged_caps['textDocumentSync'] = 1
+        for cap_name, cap_value in new_caps.items():
+            if cap_name == 'textDocumentSync':
+                current_sync = merged_caps.get('textDocumentSync')
+                new_sync = cap_value
+                if current_sync == 1 or new_sync == 1:
+                    merged_caps['textDocumentSync'] = 1
+                else:
+                    merged_caps['textDocumentSync'] = new_sync
+            elif cap_name in {'renameProvider', 'codeActionProvider'}:
+                merged_caps[cap_name] = new_caps[cap_name]
+            elif primary_payload:
+                merged_caps[cap_name] = new_caps[cap_name]
 
         aggregate['capabilities'] = merged_caps
 
@@ -243,8 +260,8 @@ class LspLogic:
         s_info = payload.get('serverInfo', {})
         if s_info:
             def merge_field(field: str, s: str) -> str:
-                current_info = aggregate.get('serverInfo', {})
-                cur = current_info.get(field, '')
+                merged_info = aggregate.get('serverInfo', {})
+                cur = merged_info.get(field, '')
                 new = s_info.get(field, '')
 
                 if not (cur and new):
