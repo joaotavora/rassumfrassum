@@ -154,7 +154,7 @@ class LspLogic:
 
         return response_payload
 
-    def get_aggregation_key(self, method: str | None, payload: JSON) -> tuple | None:
+    def get_notif_aggregation_key(self, method: str | None, payload: JSON) -> tuple | None:
         """
         Get aggregation key for notifications that need aggregation.
         Returns None if this notification doesn't need aggregation.
