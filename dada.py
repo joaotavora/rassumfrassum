@@ -3,8 +3,10 @@
 dada - A simple LSP multiplexer that forwards JSONRPC messages.
 """
 
+import traceback
 import argparse
 import asyncio
+from datetime import datetime
 import json
 import os
 import sys
@@ -44,24 +46,22 @@ class InferiorProcess:
 
 
 def log(s: str):
-    print(f"[dada] {s}", file=sys.stderr)
+    now = datetime.now()
+    timestamp = now.strftime("%H:%M:%S.%f")[:-3]  # truncate microseconds to milliseconds
+    print(f"[{timestamp}] {s}", file=sys.stderr)
 
 
-def log_message(direction: str, message: JSON) -> None:
+def log_message(direction: str, message: JSON, method: str) -> None:
     """
-    Log a message to stderr with direction indicator.
+    Log a JSONRPC message to stderr with extra indications
     """
-    # Determine message type
-    if "method" in message:
-        msg_type = cast(str, message["method"])
-    elif "result" in message or "error" in message:
-        msg_type = "response"
-    else:
-        msg_type = "message"
+    id = message.get("id")
+    prefix = method
+    if id is not None:
+        prefix += f"[{id}]"
 
-    # Format: [dada] --> method_name {...json...}
-    json_str = json.dumps(message, ensure_ascii=False)
-    log(f"{direction} {msg_type} {json_str}")
+    # Format: [timestamp] --> method_name {...json...}
+    log(f"{direction} {prefix} {json.dumps(message, ensure_ascii=False)}")
 
 
 async def forward_server_stderr(proc: InferiorProcess) -> None:
@@ -154,20 +154,21 @@ async def run_multiplexer(
         client_writer_transport, client_writer_protocol, None, loop
     )
 
-    async def send_to_client(message: JSON):
+    async def send_to_client(message: JSON, method: str, direction = "<--"):
         """Send a message to the client, with optional delay."""
+
+        async def send():
+            log_message(direction, message, method)
+            await write_lsp_message(client_writer, message)
 
         async def delayed_send():
             await asyncio.sleep(delay_ms / 1000.0)
-            log_message("<--", message)
-            await write_lsp_message(client_writer, message)
+            await send()
 
         if delay_ms > 0:
-            # Spawn independent task so delays don't accumulate
             asyncio.create_task(delayed_send())
         else:
-            log_message("<--", message)
-            await write_lsp_message(client_writer, message)
+            await send()
 
     async def handle_client_messages():
         """Read from client and route to appropriate servers."""
@@ -178,32 +179,25 @@ async def run_multiplexer(
                 if msg is None:
                     break
 
-                log_message("-->", msg)
-
                 method = msg.get("method")
                 id = msg.get("id")
 
-                # Route based on message type
-                if id is None and method is not None:  # notification
-                    # Inform LspLogic and route to all
+                if id is None and method is not None:
+                    # Notification
+                    log_message("-->", msg, method)
                     logic.on_client_notification(method, msg.get("params", {}))
 
-                    # FIXME: This breaks abstraction - dada.py should not know about LSP-specific methods.
-                    # We should refactor this so wowo.py tells us which aggregations to clean up.
-                    # Clean up old aggregations for updated documents
+                    # FIXME: This breaks abstraction
                     if method in ('textDocument/didOpen', 'textDocument/didChange'):
-                        params = msg.get("params", {})
-                        uri = params.get('textDocument', {}).get('uri')
-                        if uri:
-                            keys_to_remove = [k for k in pending_aggregations.keys()
-                                            if isinstance(k, tuple) and len(k) >= 3 and k[2] == uri]
-                            for key in keys_to_remove:
-                                del pending_aggregations[key]
+                        keys_to_delete = [k for k, v in pending_aggregations.items() if v["dispatched"]]
+                        for k in keys_to_delete:
+                            del pending_aggregations[k]
 
                     for p in procs:
                         await write_lsp_message(p.stdin, msg)
-                elif method is not None: # request
-                    # Inform LspLogic
+                elif method is not None:
+                    # Request
+                    log_message("-->", msg, method)
                     params = msg.get("params", {})
                     logic.on_client_request(method, params)
                     # Track shutdown requests
@@ -225,14 +219,14 @@ async def run_multiplexer(
                     # Send to selected servers
                     for p in target_procs:
                         await write_lsp_message(p.stdin, msg)
-                        log_message(f"[{p.name}] -->", msg)
+                        log_message(f"[{p.name}] -->", msg, method)
 
                     inflight_requests[id] = (method, cast(JSON, params), len(target_procs))
                 else:
                     # Response from client (to a server request)
-                    if id in server_request_mapping:
+                    if info := server_request_mapping.get(id):
                         # This is a response to a server request - remap ID and route to correct server
-                        original_id, target_proc, req_method, req_params = server_request_mapping[id]
+                        original_id, target_proc, req_method, req_params = info
                         del server_request_mapping[id]
 
                         # Inform LspLogic
@@ -247,10 +241,9 @@ async def run_multiplexer(
                         )
 
                         # Remap ID back to original
-                        remapped_msg = msg.copy()
-                        remapped_msg["id"] = original_id
-                        await write_lsp_message(target_proc.stdin, remapped_msg)
-                        log_message(f"[{target_proc.name}] -->", remapped_msg)
+                        msg["id"] = original_id
+                        log_message(f"[{target_proc.name}] s->", msg, req_method)
+                        await write_lsp_message(target_proc.stdin, msg)
                     else:
                         # Unknown response, log error
                         log(
@@ -265,7 +258,7 @@ async def run_multiplexer(
                 p.stdin.close()
                 await p.stdin.wait_closed()
 
-    def reconstruct_message(agg_state) -> JSON:
+    def _reconstruct(agg_state) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
         if agg_state["id"] is not None:
             # Response
@@ -282,14 +275,6 @@ async def run_multiplexer(
                 "params": agg_state["aggregate_payload"],
             }
 
-    async def handle_aggregation_timeout(agg_key):
-        """Handle timeout for an aggregation - send whatever we have."""
-        agg_state = pending_aggregations.get(agg_key)
-        if agg_state and agg_state["aggregate_payload"] is not None:
-            final_msg = reconstruct_message(agg_state)
-            await send_to_client(final_msg)
-            agg_state["dispatched"] = True
-
     async def handle_server_messages(proc: InferiorProcess):
         """Read from a server and route back to client."""
         nonlocal next_remapped_id
@@ -303,8 +288,6 @@ async def run_multiplexer(
                         raise RuntimeError(f"Server {proc.name} crashed")
                     break
 
-                log_message(f"[{proc.name}] <--", msg)
-
                 # Distinguish message types.  Notifications won't have
                 # id's, responses won't have method, requests will have both.
                 req_id = msg.get("id")
@@ -312,6 +295,7 @@ async def run_multiplexer(
 
                 # Server request: has both method and id
                 if method and req_id:
+                    log_message(f"[{proc.name}] <-s", msg, method)
                     # Handle server request
                     params = msg.get("params", {})
                     logic.on_server_request(method, cast(JSON, params), proc.server)
@@ -326,7 +310,7 @@ async def run_multiplexer(
                     # Forward to client with remapped ID
                     remapped_msg = msg.copy()
                     remapped_msg["id"] = remapped_id
-                    await send_to_client(remapped_msg)
+                    await send_to_client(remapped_msg, method, "<-s")
                     continue
 
                 # Server response OR Server notification
@@ -339,41 +323,68 @@ async def run_multiplexer(
                     request_info = inflight_requests.get(req_id)
                     if not request_info:
                         log(f"Dropping response to unknown {req_id}")
-                        continue;
+                        continue
                     method, req_params, expected_count = request_info
                     is_error = "error" in msg
                     payload = msg.get("error") if is_error else msg.get("result")
                     payload = logic.on_server_response(
                         method, cast(JSON, req_params), cast(JSON, payload), is_error, proc.server
                     )
+                    log_message(f"[{proc.name}] <--", msg, method)
+                    # Skip whole aggregation state business if the
+                    # original request targetted only one server.
+                    if expected_count == 1:
+                        await send_to_client(msg, method)
+                        continue
                     aggregation_key = ("response", req_id)
                 else:
                     assert(method)
+                    log_message(f"[{proc.name}] <--", msg, method)
                     payload = msg.get("params", {})
                     payload = logic.on_server_notification(
                         method, cast(JSON, payload), proc.server
                     )
                     expected_count = len(procs)
                     aggregation_key = logic.get_notif_aggregation_key(method, payload)
+                    # Logic can still dictate that aggregation will be
+                    # skipped.
                     if aggregation_key == ("drop",):
                         log(f"Dropping message from {proc.name}: {method}")
                         continue
                     if aggregation_key is None:
-                        # Forward immediately to client
-                        await send_to_client(msg)
+                        await send_to_client(msg, method)
                         continue
 
-                # Aggregation heroircs start here.
+                # If we haven't 'continue'd the loop and we got here,
+                # start aggregation heroics
                 agg_state = pending_aggregations.get(aggregation_key)
-                if agg_state:
-                    # Drop if already dispatched
-                    if agg_state["dispatched"]:
-                        log(f"Dropping tardy message from {proc.name}: {method}")
-                        continue
+                if not agg_state:
+                    # First message in this aggregation
+                    async def send_whatever_is_there(state, method):
+                        await asyncio.sleep(
+                            logic.get_aggregation_timeout_ms(method) / 1000.0
+                        )
+                        log(f"Timeout for aggregation {id(state)}!")
+                        state["dispatched"] = True
+                        await send_to_client(_reconstruct(state), method)
+
+                    agg_state = {
+                        "expected_count": expected_count,
+                        "received_count": 1,
+                        "id": req_id,
+                        "method": method,
+                        "aggregate_payload": payload,
+                        "dispatched": False,
+                    }
+                    agg_state["timeout_task"] = asyncio.create_task(send_whatever_is_there(agg_state, method));
+                    pending_aggregations[aggregation_key] = agg_state
+                else:
                     # Not the first message - aggregate with previous
+                    if agg_state["dispatched"]:
+                        log(f"Tardy message from {proc.name}: {method}")
                     agg_state[
                        "aggregate_payload"
-                    ] = await logic.aggregate_payloads(
+                    ] = logic.aggregate_payloads(
                         agg_state["method"],
                         agg_state["aggregate_payload"],
                         payload,
@@ -381,49 +392,28 @@ async def run_multiplexer(
                         is_error,
                     )
                     agg_state["received_count"] += 1
-                else:
-                    timeout_task = asyncio.create_task(
-                        asyncio.sleep(
-                            logic.get_aggregation_timeout_ms(method) / 1000.0
-                        )
-                    )
-                    agg_state = {
-                        "expected_count": expected_count,
-                        "received_count": 1,
-                        "id": req_id,
-                        "method": method,
-                        "aggregate_payload": payload,
-                        "timeout_task": timeout_task,
-                        "dispatched": False,
-                    }
-                    pending_aggregations[aggregation_key] = agg_state
-
-                    # Setup timeout handler
-                    async def timeout_handler():
-                        await timeout_task
-                        # Check if aggregation still pending (might have completed early)
-                        if aggregation_key in pending_aggregations:
-                            await handle_aggregation_timeout(aggregation_key)
-
-                    asyncio.create_task(timeout_handler())
-
-                # Check if all messages received
-                if agg_state["received_count"] == agg_state["expected_count"]:
-                    # Cancel timeout
-                    agg_state["timeout_task"].cancel()
-                    # Send aggregated result to client
-                    final_msg = reconstruct_message(agg_state)
-                    await send_to_client(final_msg)
-                    agg_state["dispatched"] = True
-                    # Remove from requests needing aggregation if it's a response
-                    if req_id is not None:
-                        inflight_requests.pop(req_id, None)
+                    # Check if all messages received
+                    if agg_state["received_count"] == agg_state["expected_count"]:
+                        if (agg_state["dispatched"]):
+                            log(f"Not re-sending now-complete aggregation {id(agg_state)}")
+                            continue
+                        else:
+                            log(f"Aggregation {id(agg_state)} completes normally")
+                        # Cancel timeout
+                        agg_state["timeout_task"].cancel()
+                        # Send aggregated result to client
+                        await send_to_client(_reconstruct(agg_state), method)
+                        agg_state["dispatched"] = True
+                        # Remove from requests needing aggregation if it's a response
+                        if req_id is not None:
+                            inflight_requests.pop(req_id, None)
 
         except RuntimeError:
             # Server crashed - re-raise to propagate to main
             raise
         except Exception as e:
             log(f"Error handling messages from {proc.name}: {e}")
+            print(traceback.format_exc(), file=sys.stderr)
         finally:
             pass
 

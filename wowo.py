@@ -185,7 +185,7 @@ class LspLogic:
         # Default for responses
         return 2000  # 2 seconds
 
-    async def aggregate_payloads(
+    def aggregate_payloads(
         self,
         method: str,
         aggregate: JSON,
@@ -218,7 +218,7 @@ class LspLogic:
             return (cast(list, aggregate) or []) + (cast(list, payload) or [])
         elif method == 'initialize':
             # Merge capabilities
-            return await self._merge_initialize_payloads(
+            return self._merge_initialize_payloads(
                 aggregate, payload, source)
         elif method == 'shutdown':
             # Shutdown returns null, just return current aggregate
@@ -227,7 +227,7 @@ class LspLogic:
             # Default: return current aggregate
             return aggregate
 
-    async def _merge_initialize_payloads(
+    def _merge_initialize_payloads(
         self,
         aggregate: JSON,
         payload: JSON,
