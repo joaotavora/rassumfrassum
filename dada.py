@@ -107,9 +107,6 @@ async def run_multiplexer(
     Blocks on asyncio.gather() until a bunch of loopy async tasks complete.
 
     """
-    quiet_server = opts.quiet_server
-    delay_ms = opts.delay_ms
-    drop_tardy = opts.drop_tardy
     # Launch all servers
     procs: list[InferiorProcess] = []
     for i, cmd in enumerate(server_commands):
@@ -138,8 +135,8 @@ async def run_multiplexer(
     if len(procs) > 1:
         secondaries = [i.name for i in procs[1:]]
         log(f"Secondary servers: {', '.join(secondaries)}")
-    if delay_ms > 0:
-        log(f"Delaying server responses by {delay_ms}ms")
+    if opts.delay_ms > 0:
+        log(f"Delaying server responses by {opts.delay_ms}ms")
 
     # Get client streams
     loop = asyncio.get_event_loop()
@@ -163,10 +160,10 @@ async def run_multiplexer(
             await write_lsp_message(client_writer, message)
 
         async def delayed_send():
-            await asyncio.sleep(delay_ms / 1000.0)
+            await asyncio.sleep(opts.delay_ms / 1000.0)
             await send()
 
-        if delay_ms > 0:
+        if opts.delay_ms > 0:
             asyncio.create_task(delayed_send())
         else:
             await send()
@@ -319,17 +316,17 @@ async def run_multiplexer(
             # Check if all messages received
             if agg_state["received_count"] == agg_state["expected_count"]:
                 if (agg_state["dispatched"] == "timed-out"):
-                    if drop_tardy:
+                    if opts.drop_tardy:
                         log(f"Dropping now-complete timed-out "
                             f"aggregation for {method} ({id(agg_state)})")
-                        agg_state["timeout_task"].cancel()
                         return
                     else:
                         log(f"Re-sending now-complete timed-out"
                             f"aggregation for {method} ({id(agg_state)})!")
                 elif (agg_state["dispatched"]):
-                    log(f"Re-sending re-completed "
+                    log(f"Not re-sending re-completed "
                         f"aggregation for {method} ({id(agg_state)})!")
+                    return
                 else:
                     log(f"Completing aggregation for {method} ({id(agg_state)})!")
                 # Cancel timeout
@@ -445,7 +442,7 @@ async def run_multiplexer(
         tasks.append(handle_server_messages(p))
 
         # Forward stderr
-        if not quiet_server:
+        if not opts.quiet_server:
             tasks.append(forward_server_stderr(p))
 
     try:
