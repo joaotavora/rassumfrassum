@@ -357,7 +357,7 @@ async def run_multiplexer(
                 method = msg.get("method")
 
                 # Server request: has both method and id
-                if method and req_id:
+                if method and req_id is not None:
                     log_message(f"[{proc.name}] <-s", msg, method)
                     # Handle server request
                     params = msg.get("params", {})
