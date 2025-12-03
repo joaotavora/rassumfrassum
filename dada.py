@@ -307,7 +307,11 @@ async def run_multiplexer(
                 is_error,
             )
             agg_state["received_count"] += 1
-            # Check if all messages received (yes the >= is)
+            # Check if all messages received (yes the >= is) FIXME:
+            # instead of expected_count/received_count, we should be
+            # monitoring the set of procs that have replied, because
+            # one server can send multiple notifications and trip up
+            # the system
             if agg_state["received_count"] >= agg_state["expected_count"]:
                 if (agg_state["dispatched"] == "timed-out"):
                     if opts.drop_tardy:
