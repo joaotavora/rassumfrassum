@@ -109,6 +109,7 @@ async def run_multiplexer(
     """
     quiet_server = opts.quiet_server
     delay_ms = opts.delay_ms
+    drop_tardy = opts.drop_tardy
     # Launch all servers
     procs: list[InferiorProcess] = []
     for i, cmd in enumerate(server_commands):
@@ -318,8 +319,14 @@ async def run_multiplexer(
             # Check if all messages received
             if agg_state["received_count"] == agg_state["expected_count"]:
                 if (agg_state["dispatched"] == "timed-out"):
-                    log(f"Re-sending now-complete timed-out"
-                        f"aggregation for {method} ({id(agg_state)})!")
+                    if drop_tardy:
+                        log(f"Dropping now-complete timed-out "
+                            f"aggregation for {method} ({id(agg_state)})")
+                        agg_state["timeout_task"].cancel()
+                        return
+                    else:
+                        log(f"Re-sending now-complete timed-out"
+                            f"aggregation for {method} ({id(agg_state)})!")
                 elif (agg_state["dispatched"]):
                     log(f"Re-sending re-completed "
                         f"aggregation for {method} ({id(agg_state)})!")
@@ -500,6 +507,8 @@ def main() -> None:
     )
     parser.add_argument('--quiet-server', action='store_true')
     parser.add_argument('--delay-ms', type=int, default=0, metavar='N')
+    parser.add_argument('--drop-tardy', action='store_true',
+                        help='Drop tardy messages instead of re-sending complete aggregations')
 
     opts = parser.parse_args(dada_args)
 
