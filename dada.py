@@ -307,20 +307,24 @@ async def run_multiplexer(
                 is_error,
             )
             agg_state["received_count"] += 1
-            # Check if all messages received
-            if agg_state["received_count"] == agg_state["expected_count"]:
+            # Check if all messages received (yes the >= is)
+            if agg_state["received_count"] >= agg_state["expected_count"]:
                 if (agg_state["dispatched"] == "timed-out"):
                     if opts.drop_tardy:
-                        log(f"Dropping now-complete timed-out "
-                            f"aggregation for {method} ({id(agg_state)})")
+                        warn(f"Dropping tardy message for previously timed-out "
+                             f"aggregation for {method} ({id(agg_state)})")
                         return
                     else:
-                        log(f"Re-sending now-complete timed-out"
+                        log(f"Re-sending now-complete timed-out "
                             f"aggregation for {method} ({id(agg_state)})!")
                 elif (agg_state["dispatched"]):
-                    log(f"Not re-sending re-completed "
-                        f"aggregation for {method} ({id(agg_state)})!")
-                    return
+                    if opts.drop_tardy:
+                        log(f"Dropping tardy message for previously completed "
+                            f"aggregation for {method} ({id(agg_state)})!")
+                        return
+                    else:
+                        log(f"Re-sending enhancement of previously completed "
+                            f"aggregation for {method} ({id(agg_state)})!")
                 else:
                     log(f"Completing aggregation for {method} ({id(agg_state)})!")
                 # Cancel timeout
