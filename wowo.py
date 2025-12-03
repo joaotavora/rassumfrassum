@@ -2,7 +2,7 @@
 LSP-specific message routing and merging logic.
 """
 
-import asyncio # becasue reaons
+import asyncio # because reasons
 from dataclasses import dataclass
 from jaja import JSON
 from typing import cast
@@ -241,14 +241,15 @@ class LspLogic:
         # Merge capabilities by iterating through all keys
         merged_caps = aggregate.get('capabilities', {})
         new_caps = payload.get('capabilities', {})
+
         for cap_name, cap_value in new_caps.items():
             if cap_name == 'textDocumentSync':
+                def t1sync(x):
+                    return x == 1 or (isinstance(x, dict) and
+                                      x.get("change") == 1)
                 current_sync = merged_caps.get('textDocumentSync')
-                new_sync = cap_value
-                if current_sync == 1 or new_sync == 1:
-                    merged_caps['textDocumentSync'] = 1
-                else:
-                    merged_caps['textDocumentSync'] = new_sync
+                if not t1sync(current_sync) and t1sync(cap_value):
+                    merged_caps['textDocumentSync'] = cap_value
             elif cap_name in {'renameProvider', 'codeActionProvider'}:
                 merged_caps[cap_name] = new_caps[cap_name]
             elif primary_payload:
