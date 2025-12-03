@@ -6,7 +6,6 @@ dada - A simple LSP multiplexer that forwards JSONRPC messages.
 import traceback
 import argparse
 import asyncio
-from datetime import datetime
 import json
 import os
 import sys
@@ -17,6 +16,7 @@ from jaja import (
     write_message as write_lsp_message,
     JSON,
 )
+from lolo import log, warn, event
 from typing import cast
 from dataclasses import dataclass
 
@@ -45,12 +45,6 @@ class InferiorProcess:
         return self.server.name
 
 
-def log(s: str):
-    now = datetime.now()
-    timestamp = now.strftime("%H:%M:%S.%f")[:-3]  # truncate microseconds to milliseconds
-    print(f"[{timestamp}] {s}", file=sys.stderr)
-
-
 def log_message(direction: str, message: JSON, method: str) -> None:
     """
     Log a JSONRPC message to stderr with extra indications
@@ -61,7 +55,7 @@ def log_message(direction: str, message: JSON, method: str) -> None:
         prefix += f"[{id}]"
 
     # Format: [timestamp] --> method_name {...json...}
-    log(f"{direction} {prefix} {json.dumps(message, ensure_ascii=False)}")
+    event(f"{direction} {prefix} {json.dumps(message, ensure_ascii=False)}")
 
 
 async def forward_server_stderr(proc: InferiorProcess) -> None:

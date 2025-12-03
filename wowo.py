@@ -2,7 +2,6 @@
 LSP-specific message routing and merging logic.
 """
 
-import asyncio # because reasons
 from dataclasses import dataclass
 from jaja import JSON
 from typing import cast
