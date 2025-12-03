@@ -42,21 +42,26 @@ class LspLogic:
 
         Servers are queried in order (primary first).
         """
+        caps = server.capabilities or {}
         # initialize and shutdown go to all servers
         if method in ['initialize', 'shutdown']:
             return True
 
-        # Route textDocument/codeAction to every server with codeActionProvider
+        # Route requests to _all_ servers supporting this
         if method == 'textDocument/codeAction':
-            caps = server.capabilities or {}
             return True if caps.get('codeActionProvider') else False
 
-        # Route textDocument/rename to first server with renameProvider
+        # Route requests to _first_ server supporting this
         if method == 'textDocument/rename':
-            caps = server.capabilities or {}
             return "stop" if caps.get('renameProvider') else False
 
-        # Default: only primary server handles requests
+        if method == 'textDocument/formatting':
+            return "stop" if caps.get('documentFormattingProvider') else False
+
+        if method == 'textDocument/rangeFormatting':
+            return "stop" if caps.get('documentRangeFormattingProvider') else False
+
+        # Default: route to primary server handles requests
         return server == self.primary_server and "stop"
 
     def on_client_request(self, method: str, params: JSON) -> None:
@@ -253,6 +258,8 @@ class LspLogic:
             elif cap_name in {'renameProvider', 'codeActionProvider'}:
                 merged_caps[cap_name] = new_caps[cap_name]
             elif primary_payload:
+                merged_caps[cap_name] = new_caps[cap_name]
+            elif merged_caps.get(cap_name) is None:
                 merged_caps[cap_name] = new_caps[cap_name]
 
         aggregate['capabilities'] = merged_caps
