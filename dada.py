@@ -503,7 +503,8 @@ def main() -> None:
         add_help=False,
     )
     parser.add_argument('--quiet-server', action='store_true')
-    parser.add_argument('--delay-ms', type=int, default=0, metavar='N')
+    parser.add_argument('--delay-ms', type=int, default=0, metavar='N',
+                        help='Delay all messages from dada.py by N ms.')
     parser.add_argument('--drop-tardy', action='store_true',
                         help='Drop tardy messages instead of re-sending complete aggregations')
 
