@@ -156,6 +156,19 @@ def run_server(
 
             elif msg_id == 999 and method is None:
                 log(name, f"Got response to workspace/configuration request: {message}")
+                # Validate response and send notification if correct
+                result = message.get('result')
+                if (isinstance(result, list) and len(result) == 1 and
+                    isinstance(result[0], dict) and result[0].get('pythonPath') == '/usr/bin/python3'):
+                    # Response is correct, send success notification
+                    write_message_sync({
+                        'jsonrpc': '2.0',
+                        'method': 'custom/requestResponseOk',
+                        'params': {'server': name}
+                    })
+                    log(name, "Response validation passed, sent success notification")
+                else:
+                    log(name, f"Response validation FAILED: {result}")
 
             else:
                 if msg_id is not None:

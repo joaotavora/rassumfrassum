@@ -36,6 +36,12 @@ def main():
         }
         send_and_log(response, f"Responding to server request id={msg['id']}")
 
+    for i in range(2):
+        msg = read_message_sync()
+        assert msg is not None, f"Expected success notification {i+1}"
+        assert msg.get('method') == 'custom/requestResponseOk', \
+               f"Expected custom/requestResponseOk notification: {msg}"
+
     do_shutdown()
 
 if __name__ == '__main__':
