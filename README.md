@@ -168,6 +168,12 @@ bits are definitely an LLM's.
 
 #### Future/roadmap?
 
+It would be nice to have "presets", each preset being a
+`<languagename>.toml` file with directives on which servers to run
+with what options and maybe a custom logic class to go with it.  Then
+you could just type `rass python` to launch `basedpyright+ruff` or
+`rass js` to run `typescript-language-server+eslint`, etc.
+
 I might rewrite this in Rust or C++ if it makes sense.  Having an LSP
 middleware opens up some possibilities for making JSON communication
 more efficient.
