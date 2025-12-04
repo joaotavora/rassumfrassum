@@ -124,7 +124,7 @@ multiplexer operates.
 
 _(...not really, noone's really asked anything yet...)_
 
-#### Related projects
+#### Related projects?
 
 There's [lspx][lspx]!  Never tried it, but some people are using it.
 Development started in this Eglot discussion thread:
@@ -148,7 +148,7 @@ A pretty big one at that, since of the hundreds (thousands?)  of LSP
 servers out there, there are uncountable combinations of them, and
 some will definitely trip you up.
   
-#### Issue reports
+#### Issue reports?
 
 Read the preceding section.  If you use this and want to report
 something, you can start discussions or create issues at will.  If you
@@ -161,7 +161,7 @@ idiot-proof recipe demonstrating the bug the chances that I'll address
 it are slightly higher.  Else, just fork this repo, this is just
 Python and you're probably a programmer right?
 
-#### Did you vibe code this junk?
+#### Did I vibe code this junk?
 
 Yeah, a bit, with some heavy coaching, then I took over.  The boring
 bits are definitely an LLM's.
@@ -192,3 +192,4 @@ is simply retransmitted to the client.  The default is false.
 [eglot]: https://github.com/joaotavora/eglot
 [lsp]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/
 [build-status]: https://github.com/joaotavora/rassumfrassum/actions/workflows/test.yml
+[lspx]: https://github.com/thefrontside/lspx
