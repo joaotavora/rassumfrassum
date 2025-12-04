@@ -3,11 +3,6 @@
 Test client that expects dada to exit when server crashes.
 """
 
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 from dada.tete import do_initialize, do_initialized, log
 from dada.jaja import read_message_sync

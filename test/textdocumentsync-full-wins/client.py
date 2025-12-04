@@ -5,11 +5,6 @@ Even if the primary server reports Incremental, if any secondary server reports
 Full, the merged capability should be Full.
 """
 
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 from dada.tete import send_and_log, log
 from dada.jaja import read_message_sync

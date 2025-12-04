@@ -3,11 +3,6 @@
 Test client that verifies serverInfo merging in initialize response.
 """
 
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 from dada.tete import do_initialized, do_shutdown, send_and_log, log
 from dada.jaja import read_message_sync

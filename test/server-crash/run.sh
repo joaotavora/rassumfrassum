@@ -2,6 +2,8 @@
 set -o pipefail
 cd $(dirname "$0")
 
+
+export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH}"
 # Server s2 will crash after initialization
 # We expect dada to exit with error code 1
 

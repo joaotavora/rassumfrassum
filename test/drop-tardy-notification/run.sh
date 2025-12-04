@@ -3,6 +3,8 @@ set -e
 set -o pipefail
 cd $(dirname "$0")
 
+export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH}"
+
 # s1: 1500ms delay (exceeds 1000ms timeout, diagnostics discarded)
 # s2: immediate diagnostics
 

@@ -3,14 +3,9 @@
 Server that sends out-of-order diagnostics to test version staleness detection.
 After sending v2 diagnostics, s1 will send a stale v1 diagnostic.
 """
-
-import sys
-import time
 import threading
-from pathlib import Path
+import time
 
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 from dada.tete import run_server, make_diagnostic, write_message_sync, log
 import argparse
