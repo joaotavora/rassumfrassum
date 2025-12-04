@@ -111,7 +111,9 @@ async def launch_server(
         stderr=asyncio.subprocess.PIPE,
     )
     server = Server(name=name)
-    return InferiorProcess(process=process, server=server)
+    proc = InferiorProcess(process=process, server=server)
+    server.cookie = proc
+    return proc
 
 
 async def run_multiplexer(
@@ -227,17 +229,11 @@ async def run_multiplexer(
                     if method == "shutdown":
                         shutting_down = True
                     # Determine which servers to route to.
-                    target_procs = []
-                    for proc in procs:
-                        decision = logic.should_route_to_server(
-                            method, params, proc.server
-                        )
-                        if decision == "stop":
-                            target_procs.append(proc)
-                            break  # Early termination
-                        elif decision is True:
-                            target_procs.append(proc)
-                        # decision is False: skip this server, continue
+                    target_servers = logic.servers_to_route_to(
+                        method, params, [proc.server for proc in procs]
+                    )
+                    target_procs = cast(list[InferiorProcess],
+                                        [s.cookie for s in target_servers])
 
                     # Send to selected servers
                     for p in target_procs:

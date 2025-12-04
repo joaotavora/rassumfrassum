@@ -2,17 +2,19 @@
 LSP-specific message routing and merging logic.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from .jaja import JSON
 from typing import cast
 from .lolo import log  # pyright: ignore[reportUnusedImport]  # noqa: F401
+
 
 @dataclass
 class Server:
     """Information about a logical LSP server."""
 
     name: str
-    capabilities: JSON | None = None
+    capabilities: JSON = field(default_factory=dict)
+    cookie: object = None
 
 
 class LspLogic:
@@ -24,42 +26,43 @@ class LspLogic:
         # Track document versions: URI -> version number
         self.document_versions: dict[str, int] = {}
 
-    def should_route_to_server(
-        self, method: str, params: JSON, server: Server
-    ) -> bool | str:
+    def servers_to_route_to(
+        self, method: str, params: JSON, servers: list[Server]
+    ) -> list[Server]:
         """
-        Tell if a request should be routed to a given server.
+        Determine which servers should receive this request.
+
+        Args:
+            method: LSP method name
+            params: Request parameters
+            servers: List of available servers (primary first)
 
         Returns:
-            True: Route to this server, continue asking remaining servers
-            False: Don't route to this server, continue asking remaining servers
-            "stop": Route to this server, don't asking remaining servers
-
-        The primary server is asked first.
+            List of servers that should receive the request
         """
-        caps = server.capabilities or {}
         # initialize and shutdown go to all servers
         if method in ['initialize', 'shutdown']:
-            return True
+            return servers
 
         # Route requests to _all_ servers supporting this
         if method == 'textDocument/codeAction':
-            return True if caps.get('codeActionProvider') else False
+            return [
+                s for s in servers if s.capabilities.get('codeActionProvider')
+            ]
 
-        # Route requests to _first_ server supporting this
-        if method == 'textDocument/rename':
-            return "stop" if caps.get('renameProvider') else False
+        # Route requests to _first_ server supporting this capability
+        if cap := {
+            'textDocument/rename': 'renameProvider',
+            'textDocument/formatting': 'documentFormattingProvider',
+            'textDocument/rangeFormatting': 'documentRangeFormattingProvider',
+        }.get(method):
+            for s in servers:
+                if s.capabilities.get(cap):
+                    return [s]
+            return []
 
-        if method == 'textDocument/formatting':
-            return "stop" if caps.get('documentFormattingProvider') else False
-
-        if method == 'textDocument/rangeFormatting':
-            return (
-                "stop" if caps.get('documentRangeFormattingProvider') else False
-            )
-
-        # Default: route to primary server handles requests
-        return server == self.primary_server and "stop"
+        # Default: route to primary server
+        return [self.primary_server] if servers else []
 
     def on_client_request(self, method: str, params: JSON) -> None:
         """
@@ -141,7 +144,7 @@ class LspLogic:
             if 'name' in response_payload.get('serverInfo', {}):
                 server.name = response_payload['serverInfo']['name']
             caps = response_payload.get('capabilities')
-            server.capabilities = caps.copy() if caps else None
+            server.capabilities = caps.copy() if caps else {}
 
     def get_notif_aggregation_key(
         self, method: str | None, payload: JSON
