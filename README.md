@@ -11,6 +11,8 @@ its own stdio.  `rass` behaves like an LSP server, so clients think
 they are talking to single LSP server, even though they are secretly
 talking to many.
 
+![demo](./doc/demo.gif)
+
 An LSP client like Emacs's [Eglot][eglot] can find a python file in
 some project and invoke it like so (`C-u M-x eglot` probably helps):
 
