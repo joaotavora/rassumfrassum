@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test client that expects dada to exit when server crashes.
+Test client that expects rass to exit when server crashes.
 """
 
 
@@ -14,13 +14,13 @@ def main():
     do_initialized()
 
     # After initialized, one of the servers will crash
-    # We expect dada to exit, so we should get EOF
+    # We expect rass to exit, so we should get EOF
     msg = read_message_sync()
     if msg is not None:
         log("client", f"ERROR: Expected EOF but got message: {msg}")
         sys.exit(1)
 
-    log("client", "Got EOF as expected - dada exited after server crash")
+    log("client", "Got EOF as expected - rass exited after server crash")
 
 if __name__ == '__main__':
     main()

@@ -524,7 +524,7 @@ async def run_multiplexer(
 def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
     """
     Split args on '--' separators.
-    Returns (dada_args, [server_command1, server_command2, ...])
+    Returns (rass_args, [server_command1, server_command2, ...])
     """
     if "--" not in args:
         return args, []
@@ -532,8 +532,8 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
     # Find all '--' separator indices
     separator_indices = [i for i, arg in enumerate(args) if arg == "--"]
 
-    # Everything before first '--' is dada options
-    dada_args = args[: separator_indices[0]]
+    # Everything before first '--' is rass options
+    rass_args = args[: separator_indices[0]]
 
     # Split server commands
     server_commands: list[list[str]] = []
@@ -550,7 +550,7 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
         if server_cmd:  # Only add non-empty commands
             server_commands.append(server_cmd)
 
-    return dada_args, server_commands
+    return rass_args, server_commands
 
 
 def main() -> None:
@@ -560,9 +560,9 @@ def main() -> None:
     args = sys.argv[1:]
 
     # Parse multiple '--' separators for multiple servers
-    dada_args, server_commands = parse_server_commands(args)
+    rass_args, server_commands = parse_server_commands(args)
 
-    # Parse dada options with argparse
+    # Parse rass options with argparse
     parser = argparse.ArgumentParser(prog='rass')
     parser.add_argument(
         '--quiet-server', action='store_true', help='Suppress server\'s stderr.'
@@ -579,7 +579,7 @@ def main() -> None:
         action='store_true',
         help='Drop tardy messages instead of re-sending aggregations.',
     )
-    opts = parser.parse_args(dada_args)
+    opts = parser.parse_args(rass_args)
 
     if not server_commands:
         log(

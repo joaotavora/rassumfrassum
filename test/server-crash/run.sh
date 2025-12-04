@@ -5,7 +5,7 @@ cd $(dirname "$0")
 
 export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH}"
 # Server s2 will crash after initialization
-# We expect dada to exit with error code 1
+# We expect rass to exit with error code 1
 
 FIFO=$(mktemp -u)
 mkfifo "$FIFO"
@@ -19,9 +19,9 @@ set +e
 EXIT_CODE=$?
 set -e
 
-# Check if dada exited with error (expected behavior)
+# Check if rass exited with error (expected behavior)
 if [ $EXIT_CODE -eq 1 ]; then
-    exit 0  # Test passed - dada exited with error as expected
+    exit 0  # Test passed - rass exited with error as expected
 else
     echo "Test failed: Expected exit code 1, got $EXIT_CODE"
     exit 1

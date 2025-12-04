@@ -34,7 +34,7 @@ def main():
 
     # Wait for potential tardy response from S2
     # S2 delays 2500ms, aggregation timeout is 2000ms
-    # Wait 2700ms total to ensure tardy response has arrived at dada
+    # Wait 2700ms total to ensure tardy response has arrived at rass
     log("client", "Waiting for potential tardy initialize response...")
     time.sleep(2.7)
 
