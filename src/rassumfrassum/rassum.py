@@ -563,7 +563,12 @@ def main() -> None:
     rass_args, server_commands = parse_server_commands(args)
 
     # Parse rass options with argparse
-    parser = argparse.ArgumentParser(prog='rass')
+    parser = argparse.ArgumentParser(
+        prog='rass',
+        usage="%(prog)s [-h] [%(prog)s options] -- server1 [args...] [-- server2 ...]",
+        add_help=True,
+    )
+
     parser.add_argument(
         '--quiet-server', action='store_true', help='Suppress server\'s stderr.'
     )

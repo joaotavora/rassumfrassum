@@ -1,5 +1,5 @@
 [![Tests](https://github.com/joaotavora/rassumfrassum/actions/workflows/test.yml/badge.svg)][build-status]
-![Version](https://img.shields.io/badge/version-0.1.1-blue)
+[![PyPI version](https://img.shields.io/pypi/v/rassumfrassum)](https://pypi.org/project/rassumfrassum/)
 
 # rassumfrassum
 
