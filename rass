@@ -1,4 +1,4 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-export PYTHONPATH="${SCRIPT_DIR}/src/rassumfrassum:${PYTHONPATH}"
-exec python3 "${SCRIPT_DIR}/src/rassumfrassum/rassum.py" "$@"
+export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH}"
+exec python3 -m rassumfrassum.rassum "$@"

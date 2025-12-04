@@ -1,3 +1,3 @@
 """rassumfrassum - A simple LSP multiplexer that forwards JSONRPC messages."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

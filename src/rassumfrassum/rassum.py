@@ -10,13 +10,13 @@ import json
 import os
 import sys
 
-from frassum import LspLogic, Server
-from jaja import (
+from .frassum import LspLogic, Server
+from .jaja import (
     read_message as read_lsp_message,
     write_message as write_lsp_message,
     JSON,
 )
-from lolo import log, warn, event
+from .lolo import log, warn, event
 from typing import cast, Optional
 from dataclasses import dataclass, field
 
