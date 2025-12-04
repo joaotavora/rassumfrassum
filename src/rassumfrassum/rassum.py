@@ -10,13 +10,13 @@ import json
 import os
 import sys
 
-from rassumfrassum.frassum import LspLogic, Server
-from rassumfrassum.jaja import (
+from frassum import LspLogic, Server
+from jaja import (
     read_message as read_lsp_message,
     write_message as write_lsp_message,
     JSON,
 )
-from rassumfrassum.lolo import log, warn, event
+from lolo import log, warn, event
 from typing import cast, Optional
 from dataclasses import dataclass, field
 
@@ -563,7 +563,7 @@ def main() -> None:
     dada_args, server_commands = parse_server_commands(args)
 
     # Parse dada options with argparse
-    parser = argparse.ArgumentParser(prog='dada')
+    parser = argparse.ArgumentParser(prog='rass')
     parser.add_argument(
         '--quiet-server', action='store_true', help='Suppress server\'s stderr.'
     )
@@ -572,7 +572,7 @@ def main() -> None:
         type=int,
         default=0,
         metavar='N',
-        help='Delay all messages from dada by N ms.',
+        help='Delay all messages from rass by N ms.',
     )
     parser.add_argument(
         '--drop-tardy',
@@ -583,7 +583,7 @@ def main() -> None:
 
     if not server_commands:
         log(
-            "Usage: dada [OPTIONS] -- <primary-server> [args] [-- <secondary-server> [args]]..."
+            "Usage: rass [OPTIONS] -- <primary-server> [args] [-- <secondary-server> [args]]..."
         )
         sys.exit(1)
 
