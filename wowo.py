@@ -179,7 +179,7 @@ class LspLogic:
     def aggregate_payloads(
         self,
         method: str,
-        aggregate: JSON,
+        aggregate: JSON | list,
         payload: JSON,
         source: Server,
         is_error: bool,

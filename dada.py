@@ -17,8 +17,8 @@ from jaja import (
     JSON,
 )
 from lolo import log, warn, event
-from typing import cast
-from dataclasses import dataclass
+from typing import cast, Optional
+from dataclasses import dataclass, field
 
 
 class InferiorProcess:
@@ -50,6 +50,18 @@ class InferiorProcess:
     def name(self) -> str:
         """Convenience property to access server name."""
         return self.server.name
+
+
+@dataclass
+class AggregationState:
+    """State for tracking an ongoing message aggregation."""
+
+    outstanding: set[InferiorProcess]
+    id: Optional[int]
+    method: str
+    aggregate: JSON | list
+    dispatched: bool | str = False
+    timeout_task: Optional[asyncio.Task] = field(default=None)
 
 
 def log_message(direction: str, message: JSON, method: str) -> None:
@@ -119,9 +131,8 @@ async def run_multiplexer(
     # Create message router
     logic = LspLogic(procs[0].server)
 
-    # Track ongoing aggregations key -> aggregation state (a dict with
-    # lots of stuff. FIXME: make a class!)
-    pending_aggregations = {}
+    # Track ongoing aggregations: key -> AggregationState
+    pending_aggregations: dict[tuple, AggregationState] = {}
 
     # Track which request IDs need aggregation: id -> (method, params)
     inflight_requests = {}
@@ -199,7 +210,7 @@ async def run_multiplexer(
                         keys_to_delete = [
                             k
                             for k, v in pending_aggregations.items()
-                            if v["dispatched"]
+                            if v.dispatched
                         ]
                         for k in keys_to_delete:
                             del pending_aggregations[k]
@@ -276,101 +287,103 @@ async def run_multiplexer(
                 p.stdin.close()
                 await p.stdin.wait_closed()
 
-    def _reconstruct(agg_state) -> JSON:
+    def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
-        if agg_state["id"] is not None:
+        if ag.id is not None:
             # Response
             return {
                 "jsonrpc": "2.0",
-                "id": agg_state["id"],
-                "result": agg_state["aggregate_payload"],
+                "id": ag.id,
+                "result": ag.aggregate,
             }
         else:
             # Notification
             return {
                 "jsonrpc": "2.0",
-                "method": agg_state["method"],
-                "params": agg_state["aggregate_payload"],
+                "method": ag.method,
+                "params": ag.aggregate,
             }
 
     async def _aggregation_heroics(
         proc, aggregation_key, method, targets, req_id, payload, is_error
     ):
-        agg_state = pending_aggregations.get(aggregation_key)
-        if not agg_state:
+        ag = pending_aggregations.get(aggregation_key)
+
+        
+        if not ag:
             outstanding = targets.copy()
 
             outstanding.discard(proc)
             # First message in this aggregation
-            async def send_whatever_is_there(state, method):
+            async def send_whatever_is_there(state: AggregationState, method):
                 await asyncio.sleep(
                     logic.get_aggregation_timeout_ms(method) / 1000.0
                 )
                 log(f"Timeout for aggregation for {method} ({id(state)})!")
-                state["dispatched"] = "timed-out"
+                state.dispatched = "timed-out"
                 await send_to_client(_reconstruct(state), method)
-            agg_state = {
-                "outstanding": outstanding,
-                "id": req_id,
-                "method": method,
-                "aggregate_payload": payload,
-                "dispatched": False,
-            }
-            agg_state["timeout_task"] = asyncio.create_task(
-                send_whatever_is_there(agg_state, method)
+            ag = AggregationState(
+                outstanding=outstanding,
+                id=req_id,
+                method=method,
+                aggregate=payload,
             )
-            pending_aggregations[aggregation_key] = agg_state
+            ag.timeout_task = asyncio.create_task(
+                send_whatever_is_there(ag, method)
+            )
+            pending_aggregations[aggregation_key] = ag
         else:
-            method = agg_state["method"]
+            method = ag.method
             # Not the first message - aggregate with previous
-            if agg_state["dispatched"]:
+            if ag.dispatched:
                 log(
                     f"Tardy {proc.name} aggregation "
-                    f"for {method} ({id(agg_state)})"
+                    f"for {method} ({id(ag)})"
                 )
-            agg_state["aggregate_payload"] = logic.aggregate_payloads(
-                agg_state["method"],
-                agg_state["aggregate_payload"],
+            ag.aggregate = logic.aggregate_payloads(
+                ag.method,
+                ag.aggregate,
                 payload,
                 proc.server,
                 is_error,
             )
-            agg_state["outstanding"].discard(proc)
-            if not agg_state["outstanding"]:
+            ag.outstanding.discard(proc)
+            if not ag.outstanding:
                 # Aggregation is now complete
-                if agg_state["dispatched"] == "timed-out":
+                if ag.dispatched == "timed-out":
                     if opts.drop_tardy:
                         warn(
                             f"Dropping tardy message for previously timed-out "
-                            f"aggregation for {method} ({id(agg_state)})"
+                            f"aggregation for {method} ({id(ag)})"
                         )
                         return
                     else:
                         log(
                             f"Re-sending now-complete timed-out "
-                            f"aggregation for {method} ({id(agg_state)})!"
+                            f"aggregation for {method} ({id(ag)})!"
                         )
-                elif agg_state["dispatched"]:
+                elif ag.dispatched:
                     if opts.drop_tardy:
                         log(
                             f"Dropping tardy message for previously completed "
-                            f"aggregation for {method} ({id(agg_state)})!"
+                            f"aggregation for {method} ({id(ag)})!"
                         )
                         return
                     else:
                         log(
                             f"Re-sending enhancement of previously completed "
-                            f"aggregation for {method} ({id(agg_state)})!"
+                            f"aggregation for {method} ({id(ag)})!"
                         )
                 else:
                     log(
-                        f"Completing aggregation for {method} ({id(agg_state)})!"
+                        f"Completing aggregation for {method} ({id(ag)})!"
                     )
                 # Cancel timeout
-                agg_state["timeout_task"].cancel()
+                if ag.timeout_task:
+                    ag.timeout_task.cancel()
                 # Send aggregated result to client
-                await send_to_client(_reconstruct(agg_state), method)
-                agg_state["dispatched"] = True
+                await send_to_client(_reconstruct(ag), method)
+                ag.dispatched = True
                 # Remove from requests needing aggregation if it's a response
                 if req_id is not None:
                     inflight_requests.pop(req_id, None)
