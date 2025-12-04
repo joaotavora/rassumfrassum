@@ -1,5 +1,8 @@
 # dada
 
+![Tests](https://github.com/joaotavora/dada/actions/workflows/test.yml/badge.svg)
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
+
 LSP/JSONRPC multiplexer that connects one LSP client to multiple LSP
 servers. It spawns one or more stdio-enabled LSP server subprocesses,
 communicates with them via pipes, and handles a client connected to
