@@ -193,6 +193,7 @@ class LspLogic:
             return aggregate
         if method == 'textDocument/publishDiagnostics':
             # Merge diagnostics
+            aggregate = cast(JSON, aggregate)
             current_diags = aggregate.get('diagnostics', [])
             new_diags = payload.get('diagnostics', [])
 
@@ -209,6 +210,7 @@ class LspLogic:
             return (cast(list, aggregate) or []) + (cast(list, payload) or [])
         elif method == 'initialize':
             # Merge capabilities
+            aggregate = cast(JSON, aggregate)
             return self._merge_initialize_payloads(aggregate, payload, source)
         elif method == 'shutdown':
             # Shutdown returns null, just return current aggregate
@@ -240,12 +242,37 @@ class LspLogic:
                 current_sync = merged_caps.get('textDocumentSync')
                 if not t1sync(current_sync) and t1sync(cap_value):
                     merged_caps['textDocumentSync'] = cap_value
-            elif cap_name in {'renameProvider', 'codeActionProvider'}:
-                merged_caps[cap_name] = new_caps[cap_name]
-            elif primary_payload:
-                merged_caps[cap_name] = new_caps[cap_name]
-            elif merged_caps.get(cap_name) is None:
-                merged_caps[cap_name] = new_caps[cap_name]
+            elif (
+                cap_name in {'renameProvider', 'codeActionProvider'}
+                or primary_payload
+                or merged_caps.get(cap_name) is None
+            ):
+                # FIXME: this "generic merging" logic is still quite
+                # dumb.
+                current = merged_caps.get(cap_name)
+                if isinstance(current, bool) and cap_value:
+                    merged_caps[cap_name] = cap_value
+                    continue
+
+                # If new_value is a boolean, handle it simply
+                if not isinstance(cap_value, dict):
+                    current = merged_caps.get(cap_name)
+                    if not isinstance(current, dict):
+                        merged_caps[cap_name] = cap_value
+                    continue
+
+                # new_value is a dict, proceed with deep merge
+                merged_caps.setdefault(cap_name, {})
+                current = merged_caps.get(cap_name)
+                for key, value in cap_value.items():
+                    if key not in current:
+                        current[key] = value
+                    elif isinstance(value, bool) and isinstance(
+                        current[key], bool
+                    ):
+                        current[key] = value or current[key]
+                    else:
+                        current[key] = value
 
         aggregate['capabilities'] = merged_caps
 
