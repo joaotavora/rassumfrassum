@@ -4,3 +4,9 @@ pythonVersion = "3.13"
 
 [tool.ruff]
 target-version = "py313"
+line-length = 80
+
+[tool.ruff.format]
+quote-style = "preserve"
+indent-style = "space"
+docstring-code-format = false

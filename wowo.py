@@ -5,19 +5,18 @@ LSP-specific message routing and merging logic.
 from dataclasses import dataclass
 from jaja import JSON
 from typing import cast
-
+from lolo import log  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 @dataclass
 class Server:
     """Information about a logical LSP server."""
+
     name: str
     capabilities: JSON | None = None
 
+
 class LspLogic:
-    """
-    Routes LSP messages between client and multiple servers.
-    Handles request routing and response merging.
-    """
+    """Decide on message routing and response aggregation."""
 
     def __init__(self, primary_server: Server):
         """Initialize with reference to the primary server."""
@@ -26,20 +25,17 @@ class LspLogic:
         self.document_versions: dict[str, int] = {}
 
     def should_route_to_server(
-        self,
-        method: str,
-        params: JSON,
-        server: Server
+        self, method: str, params: JSON, server: Server
     ) -> bool | str:
         """
-        Determine if a request should be routed to this server.
+        Tell if a request should be routed to a given server.
 
         Returns:
             True: Route to this server, continue asking remaining servers
             False: Don't route to this server, continue asking remaining servers
-            "stop": Route to this server, STOP asking remaining servers
+            "stop": Route to this server, don't asking remaining servers
 
-        Servers are queried in order (primary first).
+        The primary server is asked first.
         """
         caps = server.capabilities or {}
         # initialize and shutdown go to all servers
@@ -58,14 +54,16 @@ class LspLogic:
             return "stop" if caps.get('documentFormattingProvider') else False
 
         if method == 'textDocument/rangeFormatting':
-            return "stop" if caps.get('documentRangeFormattingProvider') else False
+            return (
+                "stop" if caps.get('documentRangeFormattingProvider') else False
+            )
 
         # Default: route to primary server handles requests
         return server == self.primary_server and "stop"
 
     def on_client_request(self, method: str, params: JSON) -> None:
         """
-        Handle client requests to servers.
+        Handle client requests to servers.  May modify params.
         """
         pass
 
@@ -99,7 +97,7 @@ class LspLogic:
         request_params: JSON,
         response_payload: JSON,
         is_error: bool,
-        server: Server
+        server: Server,
     ) -> None:
         """
         Handle client responses to server requests.
@@ -107,10 +105,7 @@ class LspLogic:
         pass
 
     def on_server_request(
-        self,
-        method: str,
-        params: JSON,
-        source: Server
+        self, method: str, params: JSON, source: Server
     ) -> None:
         """
         Handle server requests to the client.
@@ -118,24 +113,16 @@ class LspLogic:
         pass
 
     def on_server_notification(
-        self,
-        method: str,
-        params: JSON,
-        source: Server
-    ) -> JSON:
+        self, method: str, params: JSON, source: Server
+    ) -> None:
         """
         Handle server notifications.
-        Returns the (potentially modified) params.
         """
         # Add source attribution to diagnostics
         if method == 'textDocument/publishDiagnostics':
-            result = params.copy()
-            for diag in result.get('diagnostics', []):
+            for diag in params.get('diagnostics', []):
                 if 'source' not in diag:
                     diag['source'] = source.name
-            return result
-
-        return params
 
     def on_server_response(
         self,
@@ -143,8 +130,8 @@ class LspLogic:
         request_params: JSON,
         response_payload: JSON,
         is_error: bool,
-        server: Server
-    ) -> JSON:
+        server: Server,
+    ) -> None:
         """
         Handle server responses.
         Returns the (potentially modified) response_payload.
@@ -156,9 +143,9 @@ class LspLogic:
             caps = response_payload.get('capabilities')
             server.capabilities = caps.copy() if caps else None
 
-        return response_payload
-
-    def get_notif_aggregation_key(self, method: str | None, payload: JSON) -> tuple | None:
+    def get_notif_aggregation_key(
+        self, method: str | None, payload: JSON
+    ) -> tuple | None:
         """
         Get aggregation key for notifications that need aggregation.
         Returns None if this notification doesn't need aggregation.
@@ -195,7 +182,7 @@ class LspLogic:
         aggregate: JSON,
         payload: JSON,
         source: Server,
-        is_error: bool
+        is_error: bool,
     ) -> JSON | list:
         """
         Aggregate a new payload with the current aggregate.
@@ -222,8 +209,7 @@ class LspLogic:
             return (cast(list, aggregate) or []) + (cast(list, payload) or [])
         elif method == 'initialize':
             # Merge capabilities
-            return self._merge_initialize_payloads(
-                aggregate, payload, source)
+            return self._merge_initialize_payloads(aggregate, payload, source)
         elif method == 'shutdown':
             # Shutdown returns null, just return current aggregate
             return aggregate
@@ -232,10 +218,7 @@ class LspLogic:
             return aggregate
 
     def _merge_initialize_payloads(
-        self,
-        aggregate: JSON,
-        payload: JSON,
-        source: Server
+        self, aggregate: JSON, payload: JSON, source: Server
     ) -> JSON:
         """Merge initialize response payloads (result objects)."""
 
@@ -248,9 +231,12 @@ class LspLogic:
 
         for cap_name, cap_value in new_caps.items():
             if cap_name == 'textDocumentSync':
+
                 def t1sync(x):
-                    return x == 1 or (isinstance(x, dict) and
-                                      x.get("change") == 1)
+                    return x == 1 or (
+                        isinstance(x, dict) and x.get("change") == 1
+                    )
+
                 current_sync = merged_caps.get('textDocumentSync')
                 if not t1sync(current_sync) and t1sync(cap_value):
                     merged_caps['textDocumentSync'] = cap_value
@@ -266,6 +252,7 @@ class LspLogic:
         # Merge serverInfo
         s_info = payload.get('serverInfo', {})
         if s_info:
+
             def merge_field(field: str, s: str) -> str:
                 merged_info = aggregate.get('serverInfo', {})
                 cur = merged_info.get(field, '')
@@ -278,7 +265,7 @@ class LspLogic:
 
             aggregate['serverInfo'] = {
                 'name': merge_field('name', '+'),
-                'version': merge_field('version', ',')
+                'version': merge_field('version', ','),
             }
         # Return the mutated aggregate
         return aggregate

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 @dataclass
 class InferiorProcess:
     """A server subprocess and its associated logical server info."""
+
     process: asyncio.subprocess.Process
     server: Server
 
@@ -75,7 +76,9 @@ async def forward_server_stderr(proc: InferiorProcess) -> None:
         log(f"[{proc.name}] Error reading stderr: {e}")
 
 
-async def launch_server(server_command: list[str], server_index: int) -> InferiorProcess:
+async def launch_server(
+    server_command: list[str], server_index: int
+) -> InferiorProcess:
     """Launch a single LSP server subprocess."""
     basename = os.path.basename(server_command[0])
     # Make name unique by including index for multiple servers
@@ -139,14 +142,17 @@ async def run_multiplexer(
     client_protocol = asyncio.StreamReaderProtocol(client_reader)
     _ = await loop.connect_read_pipe(lambda: client_protocol, sys.stdin)
 
-    client_writer_transport, client_writer_protocol = await loop.connect_write_pipe(
+    (
+        client_writer_transport,
+        client_writer_protocol,
+    ) = await loop.connect_write_pipe(
         asyncio.streams.FlowControlMixin, sys.stdout
     )
     client_writer = asyncio.StreamWriter(
         client_writer_transport, client_writer_protocol, None, loop
     )
 
-    async def send_to_client(message: JSON, method: str, direction = "<--"):
+    async def send_to_client(message: JSON, method: str, direction="<--"):
         """Send a message to the client, with optional delay."""
 
         async def send():
@@ -180,8 +186,15 @@ async def run_multiplexer(
                     logic.on_client_notification(method, msg.get("params", {}))
 
                     # FIXME: This breaks abstraction
-                    if method in ('textDocument/didOpen', 'textDocument/didChange'):
-                        keys_to_delete = [k for k, v in pending_aggregations.items() if v["dispatched"]]
+                    if method in (
+                        'textDocument/didOpen',
+                        'textDocument/didChange',
+                    ):
+                        keys_to_delete = [
+                            k
+                            for k, v in pending_aggregations.items()
+                            if v["dispatched"]
+                        ]
                         for k in keys_to_delete:
                             del pending_aggregations[k]
 
@@ -192,15 +205,16 @@ async def run_multiplexer(
                     log_message("-->", msg, method)
                     params = msg.get("params", {})
                     logic.on_client_request(method, params)
-                    # Track shutdown requests
+                    # Track shutdown requests.  FIXME: breaks
+                    # abstraction
                     if method == "shutdown":
                         shutting_down = True
-                    # Request from client to servers
-                    # Determine which servers to route to
+                    # Determine which servers to route to.
                     target_procs = []
-                    for proc in procs:  # procs is already ordered with primary first
-                        decision = logic.should_route_to_server(method, params, proc.server)
-
+                    for proc in procs:
+                        decision = logic.should_route_to_server(
+                            method, params, proc.server
+                        )
                         if decision == "stop":
                             target_procs.append(proc)
                             break  # Early termination
@@ -213,7 +227,11 @@ async def run_multiplexer(
                         await write_lsp_message(p.stdin, msg)
                         log_message(f"[{p.name}] -->", msg, method)
 
-                    inflight_requests[id] = (method, cast(JSON, params), len(target_procs))
+                    inflight_requests[id] = (
+                        method,
+                        cast(JSON, params),
+                        len(target_procs),
+                    )
                 else:
                     # Response from client (to a server request)
                     if info := server_request_mapping.get(id):
@@ -223,24 +241,26 @@ async def run_multiplexer(
 
                         # Inform LspLogic
                         is_error = "error" in msg
-                        response_payload = msg.get("error") if is_error else msg.get("result")
+                        response_payload = (
+                            msg.get("error") if is_error else msg.get("result")
+                        )
                         logic.on_client_response(
                             req_method,
                             req_params,
                             cast(JSON, response_payload),
                             is_error,
-                            target_proc.server
+                            target_proc.server,
                         )
 
                         # Remap ID back to original
                         msg["id"] = original_id
-                        log_message(f"[{target_proc.name}] s->", msg, req_method)
+                        log_message(
+                            f"[{target_proc.name}] s->", msg, req_method
+                        )
                         await write_lsp_message(target_proc.stdin, msg)
                     else:
                         # Unknown response, log error
-                        log(
-                            f"Warning: Received response with id={id} but no matching request"
-                        )
+                        warn(f"Unknown request for response with id={id}!")
 
         except Exception as e:
             log(f"Error handling client messages: {e}")
@@ -268,8 +288,8 @@ async def run_multiplexer(
             }
 
     async def _aggregation_heroics(
-            proc, aggregation_key, method,
-            expected_count, req_id, payload, is_error):
+        proc, aggregation_key, method, expected_count, req_id, payload, is_error
+    ):
         agg_state = pending_aggregations.get(aggregation_key)
         if not agg_state:
             # First message in this aggregation
@@ -290,16 +310,18 @@ async def run_multiplexer(
                 "dispatched": False,
             }
             agg_state["timeout_task"] = asyncio.create_task(
-                send_whatever_is_there(agg_state, method))
+                send_whatever_is_there(agg_state, method)
+            )
             pending_aggregations[aggregation_key] = agg_state
         else:
             method = agg_state["method"]
             # Not the first message - aggregate with previous
             if agg_state["dispatched"]:
-                log(f"Tardy {proc.name} aggregation for {method} ({id(agg_state)})")
-            agg_state[
-               "aggregate_payload"
-            ] = logic.aggregate_payloads(
+                log(
+                    f"Tardy {proc.name} aggregation "
+                    f"for {method} ({id(agg_state)})"
+                )
+            agg_state["aggregate_payload"] = logic.aggregate_payloads(
                 agg_state["method"],
                 agg_state["aggregate_payload"],
                 payload,
@@ -313,24 +335,34 @@ async def run_multiplexer(
             # one server can send multiple notifications and trip up
             # the system
             if agg_state["received_count"] >= agg_state["expected_count"]:
-                if (agg_state["dispatched"] == "timed-out"):
+                if agg_state["dispatched"] == "timed-out":
                     if opts.drop_tardy:
-                        warn(f"Dropping tardy message for previously timed-out "
-                             f"aggregation for {method} ({id(agg_state)})")
+                        warn(
+                            f"Dropping tardy message for previously timed-out "
+                            f"aggregation for {method} ({id(agg_state)})"
+                        )
                         return
                     else:
-                        log(f"Re-sending now-complete timed-out "
-                            f"aggregation for {method} ({id(agg_state)})!")
-                elif (agg_state["dispatched"]):
+                        log(
+                            f"Re-sending now-complete timed-out "
+                            f"aggregation for {method} ({id(agg_state)})!"
+                        )
+                elif agg_state["dispatched"]:
                     if opts.drop_tardy:
-                        log(f"Dropping tardy message for previously completed "
-                            f"aggregation for {method} ({id(agg_state)})!")
+                        log(
+                            f"Dropping tardy message for previously completed "
+                            f"aggregation for {method} ({id(agg_state)})!"
+                        )
                         return
                     else:
-                        log(f"Re-sending enhancement of previously completed "
-                            f"aggregation for {method} ({id(agg_state)})!")
+                        log(
+                            f"Re-sending enhancement of previously completed "
+                            f"aggregation for {method} ({id(agg_state)})!"
+                        )
                 else:
-                    log(f"Completing aggregation for {method} ({id(agg_state)})!")
+                    log(
+                        f"Completing aggregation for {method} ({id(agg_state)})!"
+                    )
                 # Cancel timeout
                 agg_state["timeout_task"].cancel()
                 # Send aggregated result to client
@@ -364,13 +396,17 @@ async def run_multiplexer(
                     # Handle server request
                     params = msg.get("params", {})
                     logic.on_server_request(
-                        method, cast(JSON, params), proc.server)
+                        method, cast(JSON, params), proc.server
+                    )
 
                     # This is a request from server to client - remap ID
                     remapped_id = next_remapped_id
                     next_remapped_id += 1
                     server_request_mapping[remapped_id] = (
-                        req_id, proc, method, cast(JSON, params)
+                        req_id,
+                        proc,
+                        method,
+                        cast(JSON, params),
                     )
 
                     # Forward to client with remapped ID
@@ -392,10 +428,15 @@ async def run_multiplexer(
                         continue
                     method, req_params, expected_count = request_info
                     is_error = "error" in msg
-                    payload = msg.get("error") if is_error else msg.get("result")
-                    payload = logic.on_server_response(
-                        method, cast(JSON, req_params), cast(JSON, payload),
-                        is_error, proc.server
+                    payload = (
+                        msg.get("error") if is_error else msg.get("result")
+                    )
+                    logic.on_server_response(
+                        method,
+                        cast(JSON, req_params),
+                        cast(JSON, payload),
+                        is_error,
+                        proc.server,
                     )
                     log_message(f"[{proc.name}] <--", msg, method)
                     # Skip whole aggregation state business if the
@@ -407,12 +448,13 @@ async def run_multiplexer(
                 else:
                     log_message(f"[{proc.name}] <--", msg, method)
                     payload = msg.get("params", {})
-                    payload = logic.on_server_notification(
+                    logic.on_server_notification(
                         method, cast(JSON, payload), proc.server
                     )
                     expected_count = len(procs)
                     aggregation_key = logic.get_notif_aggregation_key(
-                        method, payload)
+                        method, payload
+                    )
                     # Logic can still dictate that aggregation will be
                     # skipped.
                     if aggregation_key == ("drop",):
@@ -422,11 +464,17 @@ async def run_multiplexer(
                         await send_to_client(msg, method)
                         continue
 
-                # If we haven't 'continue'd the loop and we got here,
+                # If we haven't continued the loop and we got here,
                 # start aggregation heroics
                 await _aggregation_heroics(
-                    proc, aggregation_key, method, expected_count,
-                    req_id, payload, is_error)
+                    proc,
+                    aggregation_key,
+                    method,
+                    expected_count,
+                    req_id,
+                    payload,
+                    is_error,
+                )
 
         except RuntimeError:
             # Server crashed - re-raise to propagate to main
@@ -477,7 +525,11 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
     for i, sep_idx in enumerate(separator_indices):
         # Find start and end of this server command
         start = sep_idx + 1
-        end = separator_indices[i + 1] if i + 1 < len(separator_indices) else len(args)
+        end = (
+            separator_indices[i + 1]
+            if i + 1 < len(separator_indices)
+            else len(args)
+        )
 
         server_cmd: list[str] = args[start:end]
         if server_cmd:  # Only add non-empty commands
@@ -495,22 +547,30 @@ def main() -> None:
     # Parse multiple '--' separators for multiple servers
     dada_args, server_commands = parse_server_commands(args)
 
-    if not server_commands:
-        log("Usage: dada [OPTIONS] -- <primary-server> [args] [-- <secondary-server> [args]]...")
-        sys.exit(1)
-
     # Parse dada options with argparse
-    parser = argparse.ArgumentParser(
-        prog='dada',
-        add_help=False,
+    parser = argparse.ArgumentParser(prog='dada')
+    parser.add_argument(
+        '--quiet-server', action='store_true', help='Suppress server\'s stderr.'
     )
-    parser.add_argument('--quiet-server', action='store_true')
-    parser.add_argument('--delay-ms', type=int, default=0, metavar='N',
-                        help='Delay all messages from dada.py by N ms.')
-    parser.add_argument('--drop-tardy', action='store_true',
-                        help='Drop tardy messages instead of re-sending complete aggregations')
-
+    parser.add_argument(
+        '--delay-ms',
+        type=int,
+        default=0,
+        metavar='N',
+        help='Delay all messages from dada by N ms.',
+    )
+    parser.add_argument(
+        '--drop-tardy',
+        action='store_true',
+        help='Drop tardy messages instead of re-sending aggregations.',
+    )
     opts = parser.parse_args(dada_args)
+
+    if not server_commands:
+        log(
+            "Usage: dada [OPTIONS] -- <primary-server> [args] [-- <secondary-server> [args]]..."
+        )
+        sys.exit(1)
 
     # Validate
     assert opts.delay_ms >= 0, "--delay-ms must be non-negative"
