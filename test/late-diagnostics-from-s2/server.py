@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Server for late-diagnostics-from-s2 test"""
 
-import sys
-import time
-from pathlib import Path
-
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 from dada.tete import run_server, make_diagnostic, write_message_sync
+import time
 import argparse
 
 parser = argparse.ArgumentParser()

@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Server for basic test"""
 
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
+import argparse
 
 from dada.tete import run_server, make_diagnostic, write_message_sync
-import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', required=True)

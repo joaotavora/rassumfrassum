@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """Server for server-crash test"""
 
-import sys
-from pathlib import Path
-
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 from dada.tete import run_server, log
 import argparse
