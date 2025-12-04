@@ -3,9 +3,9 @@ LSP-specific message routing and merging logic.
 """
 
 from dataclasses import dataclass
-from jaja import JSON
+from rassumfrassum.jaja import JSON
 from typing import cast
-from lolo import log  # pyright: ignore[reportUnusedImport]  # noqa: F401
+from rassumfrassum.lolo import log  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
 @dataclass
 class Server:

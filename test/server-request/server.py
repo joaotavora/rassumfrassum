@@ -2,7 +2,7 @@
 """Server for server-request test"""
 
 
-from dada.tete import run_server, log, write_message_sync
+from rassumfrassum.tete import run_server, log, write_message_sync
 import argparse
 
 parser = argparse.ArgumentParser()

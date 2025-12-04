@@ -4,8 +4,8 @@ Test client that expects dada to exit when server crashes.
 """
 
 
-from dada.tete import do_initialize, do_initialized, log
-from dada.jaja import read_message_sync
+from rassumfrassum.tete import do_initialize, do_initialized, log
+from rassumfrassum.jaja import read_message_sync
 
 def main():
     """Send initialize and initialized, then expect connection to die."""

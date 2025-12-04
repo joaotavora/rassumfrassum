@@ -4,8 +4,8 @@ Test client that verifies serverInfo merging in initialize response.
 """
 
 
-from dada.tete import do_initialized, do_shutdown, send_and_log, log
-from dada.jaja import read_message_sync
+from rassumfrassum.tete import do_initialized, do_shutdown, send_and_log, log
+from rassumfrassum.jaja import read_message_sync
 
 def main():
     """Send initialize and verify merged serverInfo."""

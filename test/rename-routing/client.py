@@ -4,8 +4,8 @@ Test that textDocument/rename routes to the first server with renameProvider.
 """
 
 
-from dada.tete import send_and_log, log
-from dada.jaja import read_message_sync
+from rassumfrassum.tete import send_and_log, log
+from rassumfrassum.jaja import read_message_sync
 
 def main():
     """Test that rename routes to first server with renameProvider."""

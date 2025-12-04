@@ -2,7 +2,7 @@
 """Server for too-late-diagnostics-from-s1 test"""
 
 
-from dada.tete import run_server, make_diagnostic, write_message_sync
+from rassumfrassum.tete import run_server, make_diagnostic, write_message_sync
 import time
 import argparse
 
