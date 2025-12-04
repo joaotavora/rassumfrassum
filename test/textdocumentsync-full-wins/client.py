@@ -8,11 +8,11 @@ Full, the merged capability should be Full.
 import sys
 from pathlib import Path
 
-test_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(test_dir))
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
 
-from client_common import send_and_log, log
-from jaja import read_message_sync
+from dada.tete import send_and_log, log
+from dada.jaja import read_message_sync
 
 def main():
     """Test that textDocumentSync=1 wins."""

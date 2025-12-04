@@ -9,10 +9,10 @@ import time
 import threading
 from pathlib import Path
 
-test_dir = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(test_dir))
+project_root = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
 
-from server_common import run_server, make_diagnostic, write_message_sync, log
+from dada.tete import run_server, make_diagnostic, write_message_sync, log
 import argparse
 
 parser = argparse.ArgumentParser()
