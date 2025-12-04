@@ -3,22 +3,26 @@
 rassumfrassum - A simple LSP multiplexer that forwards JSONRPC messages.
 """
 
-import traceback
 import argparse
 import asyncio
 import json
 import os
 import sys
+import traceback
+from dataclasses import dataclass, field
+from typing import Optional, cast
 
 from .frassum import LspLogic, Server
 from .jaja import (
-    read_message as read_lsp_message,
-    write_message as write_lsp_message,
     JSON,
 )
-from .lolo import log, warn, event
-from typing import cast, Optional
-from dataclasses import dataclass, field
+from .jaja import (
+    read_message as read_lsp_message,
+)
+from .jaja import (
+    write_message as write_lsp_message,
+)
+from .lolo import event, log, warn
 
 
 class InferiorProcess:
