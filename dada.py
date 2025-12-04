@@ -21,10 +21,16 @@ from typing import cast
 from dataclasses import dataclass
 
 
-@dataclass
 class InferiorProcess:
     """A server subprocess and its associated logical server info."""
 
+    def __init__(self, process, server):
+        self.process = process
+        self.server = server
+
+    def __repr__(self):
+        return f"InferiorProcess({self.name})"
+    
     process: asyncio.subprocess.Process
     server: Server
 
@@ -113,8 +119,8 @@ async def run_multiplexer(
     # Create message router
     logic = LspLogic(procs[0].server)
 
-    # Track ongoing aggregations
-    # key -> {expected_count, received_count, id, method, aggregate_payload, timeout_task}
+    # Track ongoing aggregations key -> aggregation state (a dict with
+    # lots of stuff. FIXME: make a class!)
     pending_aggregations = {}
 
     # Track which request IDs need aggregation: id -> (method, params)
@@ -230,7 +236,7 @@ async def run_multiplexer(
                     inflight_requests[id] = (
                         method,
                         cast(JSON, params),
-                        len(target_procs),
+                        set(target_procs),
                     )
                 else:
                     # Response from client (to a server request)
@@ -288,10 +294,13 @@ async def run_multiplexer(
             }
 
     async def _aggregation_heroics(
-        proc, aggregation_key, method, expected_count, req_id, payload, is_error
+        proc, aggregation_key, method, targets, req_id, payload, is_error
     ):
         agg_state = pending_aggregations.get(aggregation_key)
         if not agg_state:
+            outstanding = targets.copy()
+
+            outstanding.discard(proc)
             # First message in this aggregation
             async def send_whatever_is_there(state, method):
                 await asyncio.sleep(
@@ -300,10 +309,8 @@ async def run_multiplexer(
                 log(f"Timeout for aggregation for {method} ({id(state)})!")
                 state["dispatched"] = "timed-out"
                 await send_to_client(_reconstruct(state), method)
-
             agg_state = {
-                "expected_count": expected_count,
-                "received_count": 1,
+                "outstanding": outstanding,
                 "id": req_id,
                 "method": method,
                 "aggregate_payload": payload,
@@ -328,13 +335,9 @@ async def run_multiplexer(
                 proc.server,
                 is_error,
             )
-            agg_state["received_count"] += 1
-            # Check if all messages received (yes the >= is) FIXME:
-            # instead of expected_count/received_count, we should be
-            # monitoring the set of procs that have replied, because
-            # one server can send multiple notifications and trip up
-            # the system
-            if agg_state["received_count"] >= agg_state["expected_count"]:
+            agg_state["outstanding"].discard(proc)
+            if not agg_state["outstanding"]:
+                # Aggregation is now complete
                 if agg_state["dispatched"] == "timed-out":
                     if opts.drop_tardy:
                         warn(
@@ -417,7 +420,7 @@ async def run_multiplexer(
 
                 # Server response OR Server notification
                 aggregation_key = None
-                expected_count = None
+                targets = set(procs) # responses can override this
                 is_error = False
 
                 if method is None:
@@ -426,7 +429,7 @@ async def run_multiplexer(
                     if not request_info:
                         log(f"Dropping response to unknown {req_id}")
                         continue
-                    method, req_params, expected_count = request_info
+                    method, req_params, targets = request_info
                     is_error = "error" in msg
                     payload = (
                         msg.get("error") if is_error else msg.get("result")
@@ -441,7 +444,7 @@ async def run_multiplexer(
                     log_message(f"[{proc.name}] <--", msg, method)
                     # Skip whole aggregation state business if the
                     # original request targeted only one server.
-                    if expected_count == 1:
+                    if len(targets) == 1:
                         await send_to_client(msg, method)
                         continue
                     aggregation_key = ("response", req_id)
@@ -451,7 +454,6 @@ async def run_multiplexer(
                     logic.on_server_notification(
                         method, cast(JSON, payload), proc.server
                     )
-                    expected_count = len(procs)
                     aggregation_key = logic.get_notif_aggregation_key(
                         method, payload
                     )
@@ -470,7 +472,7 @@ async def run_multiplexer(
                     proc,
                     aggregation_key,
                     method,
-                    expected_count,
+                    targets,
                     req_id,
                     payload,
                     is_error,
