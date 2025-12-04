@@ -1,8 +1,9 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   build-and-publish:
@@ -10,7 +11,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
-      contents: read
+      contents: write  # Need write permission to create releases
 
     steps:
     - uses: actions/checkout@v4
@@ -27,6 +28,9 @@ jobs:
 
     - name: Build package
       run: python -m build
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
