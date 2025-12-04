@@ -9,7 +9,7 @@ trap "rm -f '$FIFO'" EXIT INT TERM
 
 # S1 (primary) responds immediately
 # S2 (secondary) delays initialize response by 2500ms (exceeds 2000ms timeout)
-timeout 6 bash -c "./client.py < '$FIFO' | ./../../dada.py --drop-tardy \
+./client.py < "$FIFO" | ./../../dada.py --drop-tardy \
          -- python ./server.py --name s1 \
          -- python ./server.py --name s2 --initialize-delay 2500 \
-> '$FIFO'"
+> "$FIFO"

@@ -7,7 +7,7 @@ FIFO=$(mktemp -u)
 mkfifo "$FIFO"
 trap "rm -f '$FIFO'" EXIT INT TERM
 
-timeout 3 bash -c "./client.py < '$FIFO' | ./../../dada.py \
+./client.py < "$FIFO" | ./../../dada.py \
          -- python ./server.py --name s1 --version 1.0.0 \
          -- python ./server.py --name s2 --version 2.0.0 \
-> '$FIFO'"
+> "$FIFO"

@@ -184,10 +184,10 @@ class LspLogic:
         Get timeout in milliseconds for this aggregation.
         """
         if method == 'textDocument/publishDiagnostics':
-            return 1000  # 1 second for diagnostics
+            return 1000
 
         # Default for responses
-        return 2000  # 2 seconds
+        return 1500
 
     def aggregate_payloads(
         self,

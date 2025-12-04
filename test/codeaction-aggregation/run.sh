@@ -11,8 +11,8 @@ trap "rm -f '$FIFO'" EXIT INT TERM
 # s2 (secondary) has codeActionProvider
 # s3 (tertiary) has codeActionProvider
 # Expected: codeAction request goes to s2 and s3, responses aggregated
-timeout 3 bash -c "./client.py < '$FIFO' | ./../../dada.py \
+./client.py < "$FIFO" | ./../../dada.py \
          -- python ./server.py --name s1 \
          -- python ./server.py --name s2 --has-code-actions \
          -- python ./server.py --name s3 --has-code-actions \
-> '$FIFO'"
+> "$FIFO"

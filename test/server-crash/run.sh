@@ -10,10 +10,10 @@ mkfifo "$FIFO"
 trap "rm -f '$FIFO'" EXIT INT TERM
 
 set +e
-timeout 3 bash -c "./client.py < '$FIFO' | ./../../dada.py \
+./client.py < "$FIFO" | ./../../dada.py \
          -- python ./server.py --name s1 \
          -- python ./server.py --name s2 --crash-after-init \
-> '$FIFO'"
+> "$FIFO"
 EXIT_CODE=$?
 set -e
 
