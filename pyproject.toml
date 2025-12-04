@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dada-lsp"  # Change this to your chosen name
+name = "rassumfrassum"
 version = "0.1.0"
 authors = [
-    { name = "João Távora", email = "joaotavora@gmail.com" },  # Update with your info
+    { name = "João Távora", email = "joaotavora@gmail.com" },
 ]
 description = "LSP/JSONRPC multiplexer for connecting one LSP client to multiple servers"
 readme = "README.md"
@@ -26,11 +26,11 @@ classifiers = [
 keywords = ["lsp", "language-server-protocol", "multiplexer", "jsonrpc"]
 
 [project.urls]
-Homepage = "https://github.com/joaotavora/dada"
-Issues = "https://github.com/joaotavora/dada/issues"
+Homepage = "https://github.com/joaotavora/rassumfrassum"
+Issues = "https://github.com/joaotavora/rassumfrassum/issues"
 
 [project.scripts]
-dada = "dada.dada:main"
+rass = "rassumfrassum.rassum:main"
 
 [tool.basedpyright]
 typeCheckingMode = "standard"

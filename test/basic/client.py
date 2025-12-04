@@ -3,8 +3,8 @@
 A more complete test client that exercises various LSP messages.
 """
 
-from dada.tete import do_initialize, do_initialized, do_shutdown, send_and_log, log
-from dada.jaja import read_message_sync
+from rassumfrassum.tete import do_initialize, do_initialized, do_shutdown, send_and_log, log
+from rassumfrassum.jaja import read_message_sync
 
 def main():
     """Send a sequence of LSP messages."""

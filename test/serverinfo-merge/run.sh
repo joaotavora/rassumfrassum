@@ -9,7 +9,7 @@ FIFO=$(mktemp -u)
 mkfifo "$FIFO"
 trap "rm -f '$FIFO'" EXIT INT TERM
 
-./client.py < "$FIFO" | ./../../dada \
+./client.py < "$FIFO" | ./../../rass \
          -- python ./server.py --name s1 --version 1.0.0 \
          -- python ./server.py --name s2 --version 2.0.0 \
 > "$FIFO"

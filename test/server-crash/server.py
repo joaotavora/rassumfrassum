@@ -2,7 +2,7 @@
 """Server for server-crash test"""
 
 
-from dada.tete import run_server, log
+from rassumfrassum.tete import run_server, log
 import argparse
 
 parser = argparse.ArgumentParser()

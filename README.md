@@ -1,6 +1,6 @@
-# dada
+# rassumfrassum
 
-![Tests](https://github.com/joaotavora/dada/actions/workflows/test.yml/badge.svg)
+![Tests](https://github.com/joaotavora/rassumfrassum/actions/workflows/test.yml/badge.svg)
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 
 LSP/JSONRPC multiplexer that connects one LSP client to multiple LSP
@@ -11,11 +11,11 @@ its own stdio.
 An LSP client like Emacs's Eglot can invoke it like this:
 
 ```bash
-dada -- basedpyright-langserver --stdio -- ruff server
+rass -- basedpyright-langserver --stdio -- ruff server
 ```
 
 To start managing Python files with a project with two servers instead
-of one.  The `--` separate `dada`'s options from `basedpyright`'s
+of one.  The `--` separate `rass`'s options from `basedpyright`'s
 from `ruff`'s.
 
 To clients, it mostly feels like talking to a single LSP server.
@@ -23,7 +23,7 @@ To clients, it mostly feels like talking to a single LSP server.
 ## Installation
 
 TBD.  I don't know much Python packaging pip stuff, etc.  Just call
-`dada` for now (a wrapper script at the project root).
+`rass` for now (a wrapper script at the project root).
 
 ## Features
 
@@ -62,24 +62,24 @@ routed:
 
 ### Architecture
 
-The codebase lives in `src/dada/` and is split into several modules:
+The codebase lives in `src/rassumfrassum/` and is split into several modules:
 
 - `jaja.py` handles bare JSON-over-stdio logistics and is completely
   ignorant of LSP. It deals with protocol framing and I/O operations.
 
-- `dada.py` is the main entry point with command-line
+- `rassum.py` is the main entry point with command-line
   processing. `run_multiplexer` starts a bunch of async tasks to read
   from the clients and servers, and waits for all of them.  The local
   lexical state in `run_multiplexer` tracks JSONRPC requests,
   responses, and notifications, and crucially the progress of ongoing
-  aggregation attempts.  In as much as possible, `dada.py` should be
+  aggregation attempts.  In as much as possible, `rassum.py` should be
   just a JSONRPC-aggregator and not know anything about particular
   custom handling of LSP message types.  There are a few violations of
   this principle, but whenever it needs to know what to do, it
-  asks/informs the upper layer in `wowo.py` about in-transit
+  asks/informs the upper layer in `frassum.py` about in-transit
   messages.
 
-- `wowo.py` contains the business logic used by `dada.py` facilities.
+- `frassum.py` contains the business logic used by `rassum.py` facilities.
   This one fully knows about LSP.  So it knows, for example, how to
   merge `initialize` and `shutdown` responses, when to reject a stale
   `textDocument/publishDiagnostics` and how to do the actual work for
@@ -97,19 +97,19 @@ There are tests under `test/`. Each test is a subdir, usually with a
 `client.py`, a `server.py` (of which instances are spawned to emulate
 multiple servers) and a `run.sh`, which creates a FIFO special file to
 wire up the stdio connections and launches `client.py` connected to
-`dada`.  `client.py` has the test assertions.  Both `client.py` and
-`server.py` use common utils from `src/dada/tete.py`.
+`rass`.  `client.py` has the test assertions.  Both `client.py` and
+`server.py` use common utils from `src/rassumfrassum/tete.py`.
 
 To run all tests, use `test/run-all.sh`.
 
 ### Logging
 
-The `stderr` output of dada is useful for peeking into the
+The `stderr` output of rass is useful for peeking into the
 conversation between all entities and understanding how the
 multiplexer operates.
 
 
-### Options to dada
+### Options to rass
 
 The `--delay-ms N` option delays all JSONRPC messages sent to the
 client by N milliseconds. Each message gets its own independent timer,

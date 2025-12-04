@@ -6,8 +6,8 @@ Verifies that tardy initialize responses are dropped.
 import time
 
 
-from dada.tete import send_and_log, log, assert_no_message_pending
-from dada.jaja import read_message_sync
+from rassumfrassum.tete import send_and_log, log, assert_no_message_pending
+from rassumfrassum.jaja import read_message_sync
 
 def main():
     """Test that tardy initialize responses are dropped."""

@@ -1,2 +1,0 @@
-#!/bin/bash
-exec python3 "$(dirname "$0")/src/dada/dada.py" "$@"

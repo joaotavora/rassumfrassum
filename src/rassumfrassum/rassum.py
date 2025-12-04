@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dada - A simple LSP multiplexer that forwards JSONRPC messages.
+rassumfrassum - A simple LSP multiplexer that forwards JSONRPC messages.
 """
 
 import traceback
@@ -10,13 +10,13 @@ import json
 import os
 import sys
 
-from wowo import LspLogic, Server
-from jaja import (
+from rassumfrassum.frassum import LspLogic, Server
+from rassumfrassum.jaja import (
     read_message as read_lsp_message,
     write_message as write_lsp_message,
     JSON,
 )
-from lolo import log, warn, event
+from rassumfrassum.lolo import log, warn, event
 from typing import cast, Optional
 from dataclasses import dataclass, field
 

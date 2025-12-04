@@ -12,7 +12,7 @@ mkfifo "$FIFO"
 trap "rm -f '$FIFO'" EXIT INT TERM
 
 set +e
-./client.py < "$FIFO" | ./../../dada \
+./client.py < "$FIFO" | ./../../rass \
          -- python ./server.py --name s1 \
          -- python ./server.py --name s2 --crash-after-init \
 > "$FIFO"
