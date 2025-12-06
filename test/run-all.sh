@@ -12,8 +12,10 @@ fi
 PASSED=0
 FAILED=0
 TIMEDOUT=0
+SKIPPED=0
 FAILED_TESTS=()
 TIMEDOUT_TESTS=()
+SKIPPED_TESTS=()
 
 for d in $TEST_DIRS; do
     n=$(basename "$d")
@@ -26,6 +28,11 @@ for d in $TEST_DIRS; do
         0)
             echo "PASSED"
             PASSED=$((PASSED + 1))
+            ;;
+        77)
+            echo "SKIPPED"
+            SKIPPED=$((SKIPPED + 1))
+            SKIPPED_TESTS+=("$n")
             ;;
         124)
             echo "TIMED OUT"
@@ -48,7 +55,7 @@ for d in $TEST_DIRS; do
 done
 
 echo
-echo "$PASSED passed, $FAILED failed, $TIMEDOUT timed out"
+echo "$PASSED passed, $FAILED failed, $SKIPPED skipped, $TIMEDOUT timed out"
 
 if [ $FAILED -gt 0 ]; then
     echo "Failed tests:"
@@ -63,5 +70,11 @@ if [ $TIMEDOUT -gt 0 ]; then
         echo "  - $test"
     done
     rc=1
+fi
+if [ $SKIPPED -gt 0 ]; then
+    echo "Skipped tests:"
+    for test in "${SKIPPED_TESTS[@]}"; do
+        echo "  - $test"
+    done
 fi
 exit $rc

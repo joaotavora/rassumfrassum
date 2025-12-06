@@ -20,21 +20,31 @@ def send_and_log(message: JSON, description: str):
     log("client", description)
     write_message_sync(message)
 
-def do_initialize() -> JSON:
+def do_initialize(capabilities: JSON | None = None) -> JSON:
     """Send initialize request and return the response."""
     send_and_log({
         'jsonrpc': '2.0',
         'id': 1,
         'method': 'initialize',
-        'params': {}
+        'params': {
+            'capabilities': capabilities or {}
+        }
     }, "Sending initialize")
 
-    msg = read_message_sync()
-    assert msg is not None, "Expected initialize response"
-    assert 'result' in msg, f"Expected 'result' in initialize response: {msg}"
-    assert 'capabilities' in msg['result'], f"Expected 'capabilities' in initialize result: {msg}"
-    log("client", "Got initialize response")
-    return msg
+    # Skip notifications until we get the actual initialize response
+    while True:
+        msg = read_message_sync()
+        assert msg is not None, "Expected initialize response"
+
+        # Skip notifications (no 'id' field)
+        if 'id' not in msg:
+            log("client", f"Skipping notification: {msg.get('method')}")
+            continue
+
+        assert 'result' in msg, f"Expected 'result' in initialize response: {msg}"
+        assert 'capabilities' in msg['result'], f"Expected 'capabilities' in initialize result: {msg}"
+        log("client", "Got initialize response")
+        return msg
 
 def do_initialized():
     """Send initialized notification."""
@@ -49,8 +59,7 @@ def do_shutdown():
     send_and_log({
         'jsonrpc': '2.0',
         'id': 3,
-        'method': 'shutdown',
-        'params': {}
+        'method': 'shutdown'
     }, "Sending shutdown")
 
     msg = read_message_sync()
