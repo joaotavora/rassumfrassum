@@ -459,6 +459,7 @@ async def run_multiplexer(
                     payload = (
                         msg.get("error") if is_error else msg.get("result")
                     )
+                    log_message(f"[{proc.name}] <--", msg, method)
                     logic.on_server_response(
                         method,
                         cast(JSON, req_params),
@@ -466,7 +467,6 @@ async def run_multiplexer(
                         is_error,
                         proc.server,
                     )
-                    log_message(f"[{proc.name}] <--", msg, method)
                     # Skip whole aggregation state business if the
                     # original request targeted only one server.
                     if len(targets) == 1:
