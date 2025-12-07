@@ -20,31 +20,69 @@ def send_and_log(message: JSON, description: str):
     log("client", description)
     write_message_sync(message)
 
-def do_initialize(capabilities: JSON | None = None) -> JSON:
-    """Send initialize request and return the response."""
-    send_and_log({
-        'jsonrpc': '2.0',
-        'id': 1,
-        'method': 'initialize',
-        'params': {
-            'capabilities': capabilities or {}
-        }
-    }, "Sending initialize")
+def read_response(expected_id: int) -> JSON:
+    """Read messages until we get a response with the expected id.
 
-    # Skip notifications until we get the actual initialize response
+    Skips notifications (messages without 'id' field).
+    Returns the response message.
+    """
     while True:
         msg = read_message_sync()
-        assert msg is not None, "Expected initialize response"
+        assert msg is not None, f"Expected response with id={expected_id}"
 
         # Skip notifications (no 'id' field)
         if 'id' not in msg:
             log("client", f"Skipping notification: {msg.get('method')}")
             continue
 
-        assert 'result' in msg, f"Expected 'result' in initialize response: {msg}"
-        assert 'capabilities' in msg['result'], f"Expected 'capabilities' in initialize result: {msg}"
-        log("client", "Got initialize response")
+        assert msg['id'] == expected_id, f"Expected id={expected_id}, got {msg.get('id')}"
+        assert 'result' in msg, f"Expected 'result' in response: {msg}"
         return msg
+
+def do_initialize(capabilities: JSON | None = None, rootUri: str | None = None) -> JSON:
+    """Send initialize request and return the response."""
+    import os
+
+    # Default capabilities that most servers expect
+    default_caps = {
+        'textDocument': {
+            'synchronization': {
+                'dynamicRegistration': False,
+                'willSave': True,
+                'willSaveWaitUntil': True,
+                'didSave': True
+            }
+        },
+        'general': {
+            'positionEncodings': ['utf-16']
+        }
+    }
+
+    # Merge with provided capabilities
+    if capabilities:
+        from rassumfrassum.util import dmerge
+        merged_caps = dmerge(default_caps.copy(), capabilities)
+    else:
+        merged_caps = default_caps
+
+    # Default rootUri to current directory
+    if rootUri is None:
+        rootUri = f"file://{os.getcwd()}"
+
+    send_and_log({
+        'jsonrpc': '2.0',
+        'id': 1,
+        'method': 'initialize',
+        'params': {
+            'rootUri': rootUri,
+            'capabilities': merged_caps
+        }
+    }, "Sending initialize")
+
+    msg = read_response(1)
+    assert 'capabilities' in msg['result'], f"Expected 'capabilities' in initialize result: {msg}"
+    log("client", "Got initialize response")
+    return msg
 
 def do_initialized():
     """Send initialized notification."""
@@ -62,10 +100,7 @@ def do_shutdown():
         'method': 'shutdown'
     }, "Sending shutdown")
 
-    msg = read_message_sync()
-    assert msg is not None, "Expected shutdown response"
-    assert 'id' in msg and msg['id'] == 3, f"Expected response with id=3: {msg}"
-    assert 'result' in msg, f"Expected 'result' in shutdown response: {msg}"
+    read_response(3)
     log("client", "Got shutdown response")
 
     send_and_log({

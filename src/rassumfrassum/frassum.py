@@ -63,6 +63,20 @@ class LspLogic:
         if method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
 
+        # Completions is special
+        if method == 'textDocument/completion':
+            cands = [s for s in servers if s.caps.get('completionProvider')]
+            if len(cands) <= 1:
+                return cands
+            if k := params.get("context", {}).get("triggerCharacter"):
+                return [
+                    s for s in cands
+                    if (cp := s.caps.get("completionProvider"))
+                    and k in cp.get("triggerCharacters", [])
+                ]
+            else:
+                return cands
+
         # Route these to at most one server supporting this capability
         if cap := {
             'textDocument/rename': 'renameProvider',
@@ -144,27 +158,36 @@ class LspLogic:
         self,
         method: str | None,
         request_params: JSON,
-        response_payload: JSON,
+        payload: JSON,
         is_error: bool,
         server: Server,
     ) -> None:
         """
         Handle server responses.
-        Returns the (potentially modified) response_payload.
         """
-        if not response_payload or is_error:
+        if not payload or is_error:
             return
 
         # Stash data fields in codeAction responses
         if method == 'textDocument/codeAction':
-            for action in cast(list, response_payload):
+            for action in cast(list, payload):
                 self._stash_data_maybe(action, server)
+
+        # Stash data fields in completion responses
+        if method == 'textDocument/completion':
+            items = (
+                payload
+                if isinstance(payload, list)
+                else payload.get('items', [])
+            )
+            for item in cast(list, items):
+                self._stash_data_maybe(item, server)
 
         # Extract server name and capabilities from initialize response
         if method == 'initialize':
-            if 'name' in response_payload.get('serverInfo', {}):
-                server.name = response_payload['serverInfo']['name']
-            caps = response_payload.get('capabilities')
+            if 'name' in payload.get('serverInfo', {}):
+                server.name = payload['serverInfo']['name']
+            caps = payload.get('capabilities')
             server.caps = caps.copy() if caps else {}
 
     def get_notif_aggregation_key(
@@ -232,6 +255,13 @@ class LspLogic:
         elif method == 'textDocument/codeAction':
             # Merge code actions - just concatenate
             return (cast(list, aggregate) or []) + (cast(list, payload) or [])
+        elif method == 'textDocument/completion':
+            def normalize(x):
+                return x if isinstance(x, dict) else {'items': x}
+            # FIXME: Deep merging CompletionList properties is wrong
+            # for many fields (e.g., isIncomplete should probably be
+            # OR'd)
+            return dmerge(normalize(aggregate), normalize(payload))
         elif method == 'initialize':
             # Merge capabilities
             aggregate = cast(JSON, aggregate)
