@@ -55,10 +55,15 @@ def main() -> None:
     # Parse rass options with argparse
     parser = argparse.ArgumentParser(
         prog='rass',
-        usage="%(prog)s [-h] [%(prog)s options] -- server1 [args...] [-- server2 ...]",
+        usage="%(prog)s [-h] [%(prog)s options] [preset] [-- server1 [args...] [-- server2 ...]]",
         add_help=True,
     )
 
+    parser.add_argument(
+        'preset',
+        nargs='?',
+        help='Preset name or path to preset file'
+    )
     parser.add_argument(
         '--quiet-server', action='store_true', help='Suppress server\'s stderr.'
     )
@@ -108,6 +113,17 @@ def main() -> None:
     }
     set_log_level(log_level_map[opts.log_level])
     set_max_log_length(opts.max_log_length)
+
+    # Load preset if specified
+    preset_logic_class = None
+    if opts.preset:
+        from .preset_loader import load_preset
+        preset_servers, preset_logic_class = load_preset(opts.preset)
+        server_commands = preset_servers + server_commands
+
+        # Use preset logic class if --logic-class wasn't explicitly set
+        if preset_logic_class and '--logic-class' not in rass_args:
+            opts.logic_class = f"{preset_logic_class.__module__}.{preset_logic_class.__name__}"
 
     if not server_commands:
         log(
