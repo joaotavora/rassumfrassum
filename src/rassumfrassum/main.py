@@ -5,10 +5,67 @@ rassumfrassum - A simple LSP multiplexer that forwards JSONRPC messages.
 
 import argparse
 import asyncio
+import importlib
+import importlib.util
 import sys
+from typing import Any
 
 from .rassum import run_multiplexer
-from .util import log, set_log_level, set_max_log_length, LOG_SILENT, LOG_WARN, LOG_INFO, LOG_DEBUG, LOG_EVENT, LOG_TRACE
+from .util import (
+    log,
+    set_log_level,
+    set_max_log_length,
+    LOG_SILENT,
+    LOG_WARN,
+    LOG_INFO,
+    LOG_DEBUG,
+    LOG_EVENT,
+    LOG_TRACE,
+    PresetResult,
+)
+
+
+def load_preset(name_or_path: str) -> PresetResult:
+    """
+    Load preset by name or file path.
+
+    Args:
+        name_or_path: 'python' or './my_preset.py'
+    """
+    # Path detection: contains '/' means external file
+    if '/' in name_or_path:
+        module = _load_preset_from_file(name_or_path)
+    else:
+        module = _load_preset_from_bundle(name_or_path)
+
+    servers_fn = getattr(module, 'get_servers', None)
+    lclass_fn = getattr(module, 'get_logic_class', None)
+
+    return (
+        servers_fn() if servers_fn else [],
+        lclass_fn() if lclass_fn else None,
+    )
+
+
+def _load_preset_from_file(filepath: str) -> Any:
+    """Load from external Python file using importlib.util."""
+    import os
+
+    abs_path = os.path.abspath(filepath)
+
+    spec = importlib.util.spec_from_file_location("_preset_module", abs_path)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"Cannot load preset from {filepath}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_preset_module"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_preset_from_bundle(name: str) -> Any:
+    """Load bundled preset by name."""
+    return importlib.import_module(f"rassumfrassum.presets.{name}")
 
 
 def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
@@ -60,9 +117,7 @@ def main() -> None:
     )
 
     parser.add_argument(
-        'preset',
-        nargs='?',
-        help='Preset name or path to preset file'
+        'preset', nargs='?', help='Preset name or path to preset file'
     )
     parser.add_argument(
         '--quiet-server', action='store_true', help='Suppress server\'s stderr.'
@@ -117,13 +172,14 @@ def main() -> None:
     # Load preset if specified
     preset_logic_class = None
     if opts.preset:
-        from .preset_loader import load_preset
         preset_servers, preset_logic_class = load_preset(opts.preset)
         server_commands = preset_servers + server_commands
 
         # Use preset logic class if --logic-class wasn't explicitly set
         if preset_logic_class and '--logic-class' not in rass_args:
-            opts.logic_class = f"{preset_logic_class.__module__}.{preset_logic_class.__name__}"
+            opts.logic_class = (
+                f"{preset_logic_class.__module__}.{preset_logic_class.__name__}"
+            )
 
     if not server_commands:
         log(

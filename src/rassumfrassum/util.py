@@ -1,6 +1,11 @@
 from datetime import datetime
 import sys
 
+# Type aliases for presets
+ServerCommand = list[str]
+ServerCommands = list[ServerCommand]
+PresetResult = tuple[ServerCommands, type | None]
+
 # Log levels (lower number = higher priority)
 LOG_SILENT = 0
 LOG_WARN = 1

@@ -20,9 +20,15 @@ some project and invoke it like so (`C-u M-x eglot` probably helps):
 rass -- basedpyright-langserver --stdio -- ruff server
 ```
 
+Or use the bundled `python` preset for the same effect:
+
+```bash
+rass python
+```
+
 This should start managing Python files within a project with two
-servers instead of one.  The `--` separate `rass`'s options from
-`basedpyright`'s from `ruff`'s.
+servers instead of one.  The `--` separators divide `rass`'s options from
+server arguments.
 
 To set up other clients, check their documentation.  
 
@@ -39,6 +45,9 @@ dependencies.
 
 ## Features
 
+- **Presets** - Use `rass python` instead of typing full server commands.
+  Bundled presets: `python` (basedpyright+ruff), `vue` (vue-language-server+tailwindcss).
+  Custom presets via Python files.
 - Merges and synchronizes diagnostics from multiple servers into a
   single `textDocument/publishDiagnostics` event.
 - Requests `textDocument/codeActions` from all servers supporting it;
@@ -173,12 +182,6 @@ Yeah, a bit, with some heavy coaching, then I took over.  The boring
 bits are definitely an LLM's.
 
 #### Future/roadmap?
-
-It would be nice to have "presets", each preset being a
-`<languagename>.toml` file with directives on which servers to run
-with what options and maybe a custom logic class to go with it.  Then
-you could just type `rass python` to launch `basedpyright+ruff` or
-`rass js` to run `typescript-language-server+eslint`, etc.
 
 I might rewrite this in Rust or C++ if it makes sense.  Having an LSP
 middleware opens up some possibilities for making JSON communication

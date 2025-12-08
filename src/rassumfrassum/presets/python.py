@@ -7,7 +7,6 @@ def get_servers():
         ['ruff', 'server']
     ]
 
-def get_logic_class():
-    """Use standard LspLogic."""
-    from rassumfrassum.frassum import LspLogic
-    return LspLogic
+
+
+
