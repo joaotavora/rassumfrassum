@@ -1,20 +1,44 @@
 from datetime import datetime
 import sys
 
-def log(s: str):
+def info(s: str):
+    """Log info-level message (high-level events, lifecycle)."""
     now = datetime.now()
     timestamp = now.strftime("%H:%M:%S.%f")[:-3]  # truncate microseconds to milliseconds
     print(f"i[{timestamp}] {s}", file=sys.stderr)
 
-def warn(s: str):
+# Alias for backward compatibility
+log = info
+
+def debug(s: str):
+    """Log debug-level message (method names, routing decisions)."""
     now = datetime.now()
-    timestamp = now.strftime("%H:%M:%S.%f")[:-3]  # truncate microseconds to milliseconds
+    timestamp = now.strftime("%H:%M:%S.%f")[:-3]
+    print(f"d[{timestamp}] {s}", file=sys.stderr)
+
+def trace(s: str):
+    """Log trace-level message (full protocol details with truncation)."""
+    now = datetime.now()
+    timestamp = now.strftime("%H:%M:%S.%f")[:-3]
+    print(f"t[{timestamp}] {s}", file=sys.stderr)
+
+def warn(s: str):
+    """Log warning message."""
+    now = datetime.now()
+    timestamp = now.strftime("%H:%M:%S.%f")[:-3]
     print(f"W[{timestamp}] WARN: {s}", file=sys.stderr)
 
 def event(s: str):
+    """Log JSONRPC protocol event."""
     now = datetime.now()
-    timestamp = now.strftime("%H:%M:%S.%f")[:-3]  # truncate microseconds to milliseconds
+    timestamp = now.strftime("%H:%M:%S.%f")[:-3]
     print(f"e[{timestamp}] {s}", file=sys.stderr)
+
+def truncate_for_log(s: str, max_len: int = 2000) -> str:
+    """Truncate a string for logging, showing original length if truncated."""
+    if len(s) <= max_len:
+        return s
+    return f"{s[:max_len]}... (truncated, {len(s)} bytes total)"
 
 def is_scalar(v):
     return not isinstance(v, (dict, list, set, tuple))
