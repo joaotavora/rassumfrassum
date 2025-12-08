@@ -16,7 +16,4 @@ FIFO=$(mktemp -u)
 mkfifo "$FIFO"
 trap "rm -f '$FIFO'" EXIT INT TERM
 
-./client.py < "$FIFO" | ./../../rass \
-         -- basedpyright-langserver --stdio \
-         -- ruff server \
-> "$FIFO"
+./client.py < "$FIFO" | ./../../rass python > "$FIFO"
