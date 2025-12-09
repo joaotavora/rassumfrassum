@@ -64,8 +64,13 @@ def _load_preset_from_file(filepath: str) -> Any:
 
 
 def _load_preset_from_bundle(name: str) -> Any:
-    """Load bundled preset by name."""
-    return importlib.import_module(f"rassumfrassum.presets.{name}")
+    """Load bundled preset by name from project root presets/ directory."""
+    import os
+    # Get project root (two levels up from this file)
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(this_dir))
+    preset_path = os.path.join(project_root, 'presets', f'{name}.py')
+    return _load_preset_from_file(preset_path)
 
 
 def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
