@@ -3,6 +3,7 @@ LSP-specific message routing and merging logic.
 """
 
 from dataclasses import dataclass, field
+from functools import reduce
 from typing import cast
 
 from .json import JSON
@@ -19,6 +20,15 @@ class Server:
     name: str
     caps: JSON = field(default_factory=dict)
     cookie: object = None
+
+
+@dataclass
+class PayloadItem:
+    """A payload item for aggregation."""
+
+    payload: JSON | list
+    server: Server
+    is_error: bool
 
 
 class LspLogic:
@@ -234,59 +244,69 @@ class LspLogic:
     def aggregate_payloads(
         self,
         method: str,
-        payload_tuples: list[tuple[JSON | list, Server, bool]],
-    ) -> JSON | list:
+        items: list[PayloadItem],
+    ) -> tuple[JSON | list, bool]:
         """
         Aggregate payloads.
-        Returns the new aggregate payload.
+        Returns tuple of (aggregate payload, is_error).
         """
 
-        # FIXME, it's not correct to skip all errors.  If _all_ are
-        # errors, I think we should do something about it.
-        payload_tuples = [p for p in payload_tuples if not p[2]]
+        # If all responses are errors, return the first error
+        if all(item.is_error for item in items):
+            return (items[0].payload, True)
+
+        # Otherwise, skip errors and aggregate successful responses
+        items = [item for item in items if not item.is_error]
+
         if method == 'textDocument/publishDiagnostics':
-            aggregate = {}
-            for p, source, _ in payload_tuples:
-                p = cast(JSON, p)
-                diags = p.get('diagnostics', [])
-                for diag in diags:
+
+            def merge_diags(acc, item):
+                p = cast(JSON, item.payload)
+                for diag in p.get('diagnostics', []):
                     if 'source' not in diag:
-                        diag['source'] = source.name
-                aggregate = dmerge(aggregate, p)
-            return aggregate
+                        diag['source'] = item.server.name
+                return dmerge(acc, p)
+
+            res = reduce(merge_diags, items, {})
+
         elif method == 'textDocument/codeAction':
-            res = []
-            for p, _, _ in payload_tuples:
-                res += p
-            return res
+            res = reduce(
+                lambda acc, item: acc + cast(list, item.payload), items, []
+            )
+
         elif method == 'textDocument/completion':
-            res = {}
 
             def normalize(x):
                 return x if isinstance(x, dict) else {'items': x}
 
             # FIXME: Deep merging CompletionList properties is wrong
-            # for many fields (e.g., isIncomplete should probably be
-            # OR'd)
-            for p, _, _ in payload_tuples:
-                res = dmerge(res, normalize(p))
-            return res
+            # for many fields (e.g., isIncomplete should probably be OR'd)
+            res = reduce(
+                lambda acc, item: dmerge(acc, normalize(item.payload)),
+                items,
+                {},
+            )
+
         elif method == 'initialize':
-            # Merge capabilities
-            res = {}
-            for p, source, _ in payload_tuples:
-                p = cast(JSON, p)
-                res = self._merge_initialize_payloads(res, p, source)
-            return res
+            res = reduce(
+                lambda acc, item: self._merge_initialize_payloads(
+                    acc, cast(JSON, item.payload), item.server
+                ),
+                items,
+                {},
+            )
+
         elif method == 'shutdown':
-            # Shutdown returns null, just return current aggregate
-            return {}
-        else:
-            # Default: do some generic mergin (could use 'reduce')
             res = {}
-            for p, _, _ in payload_tuples:
-                res = dmerge(res, cast(JSON, p))
-            return res
+
+        else:
+            res = reduce(
+                lambda acc, item: dmerge(acc, cast(JSON, item.payload)),
+                items,
+                {},
+            )
+
+        return (res, False)
 
     def _merge_initialize_payloads(
         self, aggregate: JSON, payload: JSON, source: Server

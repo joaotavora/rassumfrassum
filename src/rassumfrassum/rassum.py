@@ -12,7 +12,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, cast
 
-from .frassum import Server
+from .frassum import PayloadItem, Server
 from .json import (
     JSON,
 )
@@ -63,7 +63,7 @@ class AggregationState:
     outstanding: set[InferiorProcess]
     id: Optional[int]
     method: str
-    aggregate: dict[int, tuple[JSON | list, Server, bool]]
+    aggregate: dict[int, PayloadItem]
     dispatched: bool | str = False
     timeout_task: Optional[asyncio.Task] = field(default=None)
 
@@ -227,8 +227,8 @@ async def run_multiplexer(
                     # Request
                     log_message("-->", msg, method)
                     params = msg.get("params", {})
-                    # Track shutdown requests.  FIXME: breaks
-                    # abstraction
+                    # Track shutdown requests.  Breaks abstraction,
+                    # but not that bad.
                     if method == "shutdown":
                         shutting_down = True
                     # Determine which servers to route to.
@@ -291,14 +291,14 @@ async def run_multiplexer(
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
 
-        payload = logic.aggregate_payloads(ag.method, list(ag.aggregate.values()))
+        payload, is_error = logic.aggregate_payloads(ag.method, list(ag.aggregate.values()))
 
         if ag.id is not None:
             # Response
             return {
                 "jsonrpc": "2.0",
                 "id": ag.id,
-                "result": payload,
+                "error" if is_error else "result": payload,
             }
         else:
             # Notification
@@ -331,7 +331,7 @@ async def run_multiplexer(
                 outstanding=outstanding,
                 id=req_id,
                 method=method,
-                aggregate={id(proc): (payload, proc.server, is_error)},
+                aggregate={id(proc): PayloadItem(payload, proc.server, is_error)},
             )
             debug(f"Message from {proc.name} starts aggregation for {method} ({id(ag)})")
             ag.timeout_task = asyncio.create_task(
@@ -344,7 +344,7 @@ async def run_multiplexer(
             # Not the first message - aggregate with previous
             if ag.dispatched:
                 debug(f"Tardy {proc.name} aggregation for {method} ({id(ag)})")
-            ag.aggregate[id(proc)] = (payload, proc.server, is_error)
+            ag.aggregate[id(proc)] = PayloadItem(payload, proc.server, is_error)
             ag.outstanding.discard(proc)
             if not ag.outstanding:
                 # Aggregation is now complete
