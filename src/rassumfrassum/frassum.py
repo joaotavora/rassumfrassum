@@ -28,7 +28,7 @@ class LspLogic:
         """Initialize with all servers."""
         self.servers = servers
         # Track document versions: URI -> version number
-        self.document_versions: dict[str, int] = {}
+        self.document_versions: dict[str, dict] = {}
         # Map server ID to server object for data recovery
         self.server_by_id: dict[int, Server] = {id(s): s for s in servers}
 
@@ -107,14 +107,20 @@ class LspLogic:
             uri = text_doc.get('uri')
             version = text_doc.get('version')
             if uri is not None and version is not None:
-                self.document_versions[uri] = version
+                self.document_versions[uri] = {
+                    'tracked_version': version,
+                    'has_some_diags': False,
+                }
 
         elif method == 'textDocument/didChange':
             text_doc = params.get('textDocument', {})
             uri = text_doc.get('uri')
             version = text_doc.get('version')
             if uri is not None and version is not None:
-                self.document_versions[uri] = version
+                self.document_versions[uri] = {
+                    'tracked_version': version,
+                    'has_some_diags': False,
+                }
 
         elif method == 'textDocument/didClose':
             text_doc = params.get('textDocument', {})
@@ -193,24 +199,25 @@ class LspLogic:
 
     def get_notif_aggregation_key(
         self, method: str | None, payload: JSON
-    ) -> tuple | None:
+    ) -> tuple[tuple, bool] | str | None:
         """
-        Get aggregation key for notifications that need aggregation.
+        Get aggregation info for notifications that need aggregation.
         Returns None if this notification doesn't need aggregation.
-        Returns ("drop",) if message should be dropped (stale version).
+        Returns "drop" if message should be dropped (stale version).
         """
         if method == 'textDocument/publishDiagnostics':
-            uri = payload.get('uri', '')
-            version = payload.get('version')
-
-            if uri in self.document_versions:
-                tracked_version = self.document_versions[uri]
+            if (uri := payload.get('uri')) and (
+                probe := self.document_versions.get(uri)
+            ):
+                tracked_version = probe["tracked_version"]
+                version = payload.get('version')
                 if version is None:
                     version = tracked_version
-                elif version < tracked_version:
-                    return ("drop",)
-
-            return ('notification', method, uri, version or 0)
+                elif version != tracked_version:
+                    return "drop"
+                had_diags = probe["has_some_diags"]
+                probe["has_some_diags"] = True
+                return (('notification', method, uri), not had_diags)
 
         return None
 
@@ -227,36 +234,33 @@ class LspLogic:
     def aggregate_payloads(
         self,
         method: str,
-        aggregate: JSON | list,
-        payload: JSON,
-        source: Server,
-        is_error: bool,
+        payload_tuples: list[tuple[JSON | list, Server, bool]],
     ) -> JSON | list:
         """
-        Aggregate a new payload with the current aggregate.
+        Aggregate payloads.
         Returns the new aggregate payload.
         """
-        # Don't aggregate error responses, just skip them
-        if is_error:
-            return aggregate
+
+        # FIXME, it's not correct to skip all errors.  If _all_ are
+        # errors, I think we should do something about it.
+        payload_tuples = [p for p in payload_tuples if not p[2]]
         if method == 'textDocument/publishDiagnostics':
-            # Merge diagnostics
-            aggregate = cast(JSON, aggregate)
-            current_diags = aggregate.get('diagnostics', [])
-            new_diags = payload.get('diagnostics', [])
-
-            # Add source to new diagnostics
-            for diag in new_diags:
-                if 'source' not in diag:
-                    diag['source'] = source.name
-
-            # Combine diagnostics
-            aggregate['diagnostics'] = current_diags + new_diags
+            aggregate = {}
+            for p, source, _ in payload_tuples:
+                p = cast(JSON, p)
+                diags = p.get('diagnostics', [])
+                for diag in diags:
+                    if 'source' not in diag:
+                        diag['source'] = source.name
+                aggregate = dmerge(aggregate, p)
             return aggregate
         elif method == 'textDocument/codeAction':
-            # Merge code actions - just concatenate
-            return (cast(list, aggregate) or []) + (cast(list, payload) or [])
+            res = []
+            for p, _, _ in payload_tuples:
+                res += p
+            return res
         elif method == 'textDocument/completion':
+            res = {}
 
             def normalize(x):
                 return x if isinstance(x, dict) else {'items': x}
@@ -264,17 +268,25 @@ class LspLogic:
             # FIXME: Deep merging CompletionList properties is wrong
             # for many fields (e.g., isIncomplete should probably be
             # OR'd)
-            return dmerge(normalize(aggregate), normalize(payload))
+            for p, _, _ in payload_tuples:
+                res = dmerge(res, normalize(p))
+            return res
         elif method == 'initialize':
             # Merge capabilities
-            aggregate = cast(JSON, aggregate)
-            return self._merge_initialize_payloads(aggregate, payload, source)
+            res = {}
+            for p, source, _ in payload_tuples:
+                p = cast(JSON, p)
+                res = self._merge_initialize_payloads(res, p, source)
+            return res
         elif method == 'shutdown':
             # Shutdown returns null, just return current aggregate
-            return aggregate
+            return {}
         else:
-            # Default: return current aggregate
-            return aggregate
+            # Default: do some generic mergin (could use 'reduce')
+            res = {}
+            for p, _, _ in payload_tuples:
+                res = dmerge(res, cast(JSON, p))
+            return res
 
     def _merge_initialize_payloads(
         self, aggregate: JSON, payload: JSON, source: Server
