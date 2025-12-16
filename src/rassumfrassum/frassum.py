@@ -153,6 +153,10 @@ class LspLogic:
         elif method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
 
+        # Same for definition
+        elif method == 'textDocument/definition':
+            return [s for s in servers if s.caps.get('definitionProvider')]
+
         elif method == 'workspace/executeCommand':
             probe = self.commands_map.get(cast(str, params.get('command')))
             return [probe] if probe else []
@@ -493,7 +497,16 @@ class LspLogic:
         # Otherwise, skip errors and aggregate successful responses
         items = [item for item in items if (not item.is_error) and item.payload]
 
-        if method == 'textDocument/diagnostic':
+        if method == 'textDocument/definition':
+            res = reduce_maybe(
+                items,
+                lambda acc, item: self._merge_locations(
+                    acc, cast(JSON, item.payload), item.server
+                ),
+                [],
+            )
+
+        elif method == 'textDocument/diagnostic':
             all_items = []
             for item in items:
                 p = cast(JSON, item.payload)
@@ -633,6 +646,38 @@ class LspLogic:
             }
         # Return the mutated aggregate
         return aggregate
+
+    def _merge_locations(
+        self, aggregate: list[JSON], payload: JSON | list[JSON], source: Server
+    ) -> list[JSON]:
+        if isinstance(payload, dict):
+            payload = [payload]
+
+        def to_location_link(value: JSON) -> JSON | None:
+            if "targetUri" in value:
+                return value
+            # Location -> LocationLink
+            elif (uri := value.get('uri')) and (range := value.get('range')):
+                return {
+                    "targetUri": uri,
+                    "targetSelectionRange": range,
+                    "targetRange": range,
+                }
+            else:
+                return None
+
+        def location_link_equal(l1: JSON, l2: JSON) -> bool:
+            return l1["targetSelectionRange"] == l2["targetSelectionRange"]
+
+        result = []
+        for v in payload:
+            v = to_location_link(v)
+            if v and not any(
+                location_link_equal(v, other) for other in aggregate
+            ):
+                result.append(v)
+
+        return aggregate + result
 
     def _stash_data(
         self, payload: JSON, server: Server, doc_state: DocumentState
