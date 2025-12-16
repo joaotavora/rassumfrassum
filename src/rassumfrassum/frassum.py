@@ -9,6 +9,7 @@ from typing import cast
 from .json import JSON
 from .util import (
     dmerge,
+    nsmerge,
     is_scalar,
 )
 
@@ -78,6 +79,10 @@ class LspLogic:
         # Route requests to _all_ servers supporting this
         if method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
+
+        # Same for definition
+        if method == 'textDocument/definition':
+            return [s for s in servers if s.caps.get('definitionProvider')]
 
         # Completions is special
         if method == 'textDocument/completion':
@@ -301,7 +306,7 @@ class LspLogic:
 
         else:
             res = reduce(
-                lambda acc, item: dmerge(acc, cast(JSON, item.payload)),
+                lambda acc, item: nsmerge(acc, cast(JSON, item.payload)),
                 items,
                 {},
             )
