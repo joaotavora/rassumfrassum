@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from .json import JSON
 from .util import (
     dmerge,
+    nsmerge,
     is_scalar,
     debug,
     info,
@@ -152,6 +153,10 @@ class LspLogic:
         # Route codeAction to all supporting servers
         elif method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
+
+        # Same for definition
+        elif method == 'textDocument/definition':
+            return [s for s in servers if s.caps.get('definitionProvider')]
 
         elif method == 'workspace/executeCommand':
             probe = self.commands_map.get(cast(str, params.get('command')))
@@ -544,7 +549,7 @@ class LspLogic:
         else:
             res = reduce_maybe(
                 items,
-                lambda acc, item: dmerge(acc, cast(JSON, item.payload)),
+                lambda acc, item: nsmerge(acc, cast(JSON, item.payload)),
                 {},
             )
 
