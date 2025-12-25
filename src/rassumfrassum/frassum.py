@@ -239,7 +239,7 @@ class LspLogic:
             return 1000
 
         # Default for responses
-        return 1500
+        return 2200
 
     def aggregate_payloads(
         self,
