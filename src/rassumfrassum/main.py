@@ -112,7 +112,7 @@ def main() -> None:
     parser.add_argument(
         '--threaded-stdio',
         action='store_true',
-        default=True,
+        default=sys.platform.startswith('win'),
         help='Use threaded stdio bridge (default: True on Windows, False otherwise).',
     )
     opts = parser.parse_args(rass_args)
