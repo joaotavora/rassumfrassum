@@ -271,7 +271,11 @@ class LspLogic:
 
         elif method == 'textDocument/codeAction':
             res = reduce(
-                lambda acc, item: acc + cast(list, item.payload), items, []
+                lambda acc, item: acc + cast(list, item.payload)
+                if item.payload
+                else acc,
+                items,
+                [],
             )
 
         elif method == 'textDocument/completion':
