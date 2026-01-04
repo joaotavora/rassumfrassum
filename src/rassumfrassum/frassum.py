@@ -29,7 +29,7 @@ class DocumentState:
     """State for tracking diagnostics for a document."""
 
     docver: int
-    aggregate: dict[int, list] = field(
+    inflight_pushes: dict[int, list] = field(
         default_factory=dict
     )  # server_id -> diagnostics
     inflight_pulls: dict[int, None] = field(
@@ -57,7 +57,7 @@ class LspLogic:
         send_notification: Callable[[str, JSON], Awaitable[None]],
     ):
         """Initialize with all servers and a notification sender."""
-        self.servers = servers
+        self.primary = servers[0]
         self.send_notification = send_notification
         # Track document state: URI -> DocumentState
         self.document_state: dict[str, DocumentState] = {}
@@ -129,34 +129,32 @@ class LspLogic:
 
         # Handle pull diagnostics requests
         if method == 'textDocument/diagnostic':
+            # fmt: off
             if (
                 (text_doc := params.get('textDocument'))
                 and (uri := text_doc.get('uri'))
                 and (state := self.document_state.get(uri))
-                and (target := next(
-                    (s for s in servers if s.caps.get('diagnosticProvider')), None
-                ))
+                and (target := next((
+                        s for s in servers if s.caps.get('diagnosticProvider')
+                    ), None))
             ):
                 # Register inflight pull for this server
                 state.inflight_pulls[id(target)] = None
 
                 # Check if this completes the aggregation
-                if self._is_aggregation_complete(state):
-                    await self._send_aggregated_diagnostics(
-                        uri, state, 'textDocument/publishDiagnostics'
-                    )
+                if self._pushdiags_complete(state):
+                    await self._publish_pushdiags(uri, state)
 
                 return [target]
             return []
 
         # Default: route to primary server
-        return [self.servers[0]] if servers else []
+        return [servers[0]] if servers else []
 
     async def on_client_notification(self, method: str, params: JSON) -> None:
         """
         Handle client notifications to track document state.
         """
-
         def reset_state(uri: str, version: Optional[int]):
             """Reset document state. If version is None, close the document."""
             if (state := self.document_state.get(uri)) and state.timeout_task:
@@ -197,27 +195,27 @@ class LspLogic:
         """
         pass
 
-    def _is_aggregation_complete(self, state: DocumentState) -> bool:
+    def _pushdiags_complete(self, state: DocumentState) -> bool:
         """Check if diagnostic aggregation is complete for a document."""
         # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
-        return (state.aggregate.keys() | state.inflight_pulls.keys()) == self.server_by_id.keys()
+        return (
+            state.inflight_pushes.keys() | state.inflight_pulls.keys()
+        ) == self.server_by_id.keys()
 
-    async def _send_aggregated_diagnostics(
-        self, uri: str, state: DocumentState, method: str
-    ) -> None:
+    async def _publish_pushdiags(self, uri: str, state: DocumentState) -> None:
         """Send aggregated diagnostics to the client."""
         state.dispatched = True
         if state.timeout_task:
             state.timeout_task.cancel()
 
         await self.send_notification(
-            method,
+            'textDocument/publishDiagnostics',
             {
                 'uri': uri,
                 'version': state.docver,
                 'diagnostics': reduce(
                     lambda acc, diags: acc + (cast(list, diags) or []),
-                    state.aggregate.values(),
+                    state.inflight_pushes.values(),
                     [],
                 ),
             },
@@ -246,25 +244,25 @@ class LspLogic:
                 return
 
             # Update aggregate with this server's diagnostics
-            state.aggregate[id(source)] = diagnostics
+            state.inflight_pushes[id(source)] = diagnostics
 
             # If already dispatched, re-send with updated aggregation
             if state.dispatched:
                 debug("Re-sending enhanced aggregation for tardy diagnostics")
-                await self._send_aggregated_diagnostics(uri, state, method)
+                await self._publish_pushdiags(uri, state)
             # Check if this is the first diagnostic for this document
-            elif len(state.aggregate) == 1:
+            elif len(state.inflight_pushes) == 1:
                 # Start timeout task
                 async def send_on_timeout():
                     await asyncio.sleep(
                         self.get_aggregation_timeout_ms(method) / 1000.0
                     )
-                    await self._send_aggregated_diagnostics(uri, state, method)
+                    await self._publish_pushdiags(uri, state)
 
                 state.timeout_task = asyncio.create_task(send_on_timeout())
-            elif self._is_aggregation_complete(state):
+            elif self._pushdiags_complete(state):
                 # All servers (push + pull) have responded, send immediately
-                await self._send_aggregated_diagnostics(uri, state, method)
+                await self._publish_pushdiags(uri, state)
 
             return
 
@@ -377,7 +375,7 @@ class LspLogic:
         """Merge initialize response payloads (result objects)."""
 
         # Determine if this response is from primary
-        primary_payload = source == self.servers[0]
+        primary_payload = source == self.primary
 
         # Merge capabilities by iterating through all keys
         res = aggregate.get('capabilities', {})
