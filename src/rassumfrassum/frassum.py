@@ -198,9 +198,11 @@ class LspLogic:
     def _pushdiags_complete(self, state: DocumentState) -> bool:
         """Check if diagnostic aggregation is complete for a document."""
         # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
-        return (
+        retval = (
             state.inflight_pushes.keys() | state.inflight_pulls.keys()
         ) == self.server_by_id.keys()
+
+        return retval
 
     async def _publish_pushdiags(self, uri: str, state: DocumentState) -> None:
         """Send aggregated diagnostics to the client."""
@@ -250,6 +252,9 @@ class LspLogic:
             if state.dispatched:
                 debug("Re-sending enhanced aggregation for tardy diagnostics")
                 await self._publish_pushdiags(uri, state)
+            elif self._pushdiags_complete(state):
+                # All servers (push + pull) have responded, send immediately
+                await self._publish_pushdiags(uri, state)
             # Check if this is the first diagnostic for this document
             elif len(state.inflight_pushes) == 1:
                 # Start timeout task
@@ -260,9 +265,6 @@ class LspLogic:
                     await self._publish_pushdiags(uri, state)
 
                 state.timeout_task = asyncio.create_task(send_on_timeout())
-            elif self._pushdiags_complete(state):
-                # All servers (push + pull) have responded, send immediately
-                await self._publish_pushdiags(uri, state)
 
             return
 
