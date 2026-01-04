@@ -188,10 +188,6 @@ class LspLogic:
             if (version := params.get('version')) and version != state.docver:
                 return
 
-            if state.dispatched:
-                debug("Dropping tardy diagnostics")
-                return
-
             # Update aggregate with this server's diagnostics
             state.aggregate[id(source)] = diagnostics
 
@@ -215,8 +211,12 @@ class LspLogic:
                 await asyncio.sleep(self.get_aggregation_timeout_ms(method) / 1000.0)
                 await send_aggregated()
 
+            # If already dispatched, re-send with updated aggregation
+            if state.dispatched:
+                debug("Re-sending enhanced aggregation for tardy diagnostics")
+                await send_aggregated()
             # Check if this is the first diagnostic for this document
-            if len(state.aggregate) == 1:
+            elif len(state.aggregate) == 1:
                 state.timeout_task = asyncio.create_task(send_aggregated_on_timeout())
             elif state.aggregate.keys() == self.server_by_id.keys():
                 await send_aggregated()
