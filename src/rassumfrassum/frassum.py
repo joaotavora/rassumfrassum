@@ -32,6 +32,9 @@ class DocumentState:
     aggregate: dict[int, list] = field(
         default_factory=dict
     )  # server_id -> diagnostics
+    inflight_pulls: dict[int, None] = field(
+        default_factory=dict
+    )  # server_id -> None (acts as a set)
     timeout_task: Optional[asyncio.Task] = None
     dispatched: bool = False
 
@@ -124,6 +127,28 @@ class LspLogic:
                     return [s]
             return []
 
+        # Handle pull diagnostics requests
+        if method == 'textDocument/diagnostic':
+            if (
+                (text_doc := params.get('textDocument'))
+                and (uri := text_doc.get('uri'))
+                and (state := self.document_state.get(uri))
+                and (target := next(
+                    (s for s in servers if s.caps.get('diagnosticProvider')), None
+                ))
+            ):
+                # Register inflight pull for this server
+                state.inflight_pulls[id(target)] = None
+
+                # Check if this completes the aggregation
+                if self._is_aggregation_complete(state):
+                    await self._send_aggregated_diagnostics(
+                        uri, state, 'textDocument/publishDiagnostics'
+                    )
+
+                return [target]
+            return []
+
         # Default: route to primary server
         return [self.servers[0]] if servers else []
 
@@ -172,6 +197,32 @@ class LspLogic:
         """
         pass
 
+    def _is_aggregation_complete(self, state: DocumentState) -> bool:
+        """Check if diagnostic aggregation is complete for a document."""
+        # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
+        return (state.aggregate.keys() | state.inflight_pulls.keys()) == self.server_by_id.keys()
+
+    async def _send_aggregated_diagnostics(
+        self, uri: str, state: DocumentState, method: str
+    ) -> None:
+        """Send aggregated diagnostics to the client."""
+        state.dispatched = True
+        if state.timeout_task:
+            state.timeout_task.cancel()
+
+        await self.send_notification(
+            method,
+            {
+                'uri': uri,
+                'version': state.docver,
+                'diagnostics': reduce(
+                    lambda acc, diags: acc + (cast(list, diags) or []),
+                    state.aggregate.values(),
+                    [],
+                ),
+            },
+        )
+
     async def on_server_notification(
         self, method: str, params: JSON, source: Server
     ) -> None:
@@ -197,43 +248,23 @@ class LspLogic:
             # Update aggregate with this server's diagnostics
             state.aggregate[id(source)] = diagnostics
 
-            async def send_aggregated():
-                """Send aggregated diagnostics (cancels timeout if needed)."""
-                state.dispatched = True
-                if state.timeout_task:
-                    state.timeout_task.cancel()
-
-                await self.send_notification(
-                    method,
-                    {
-                        'uri': uri,
-                        'version': state.docver,
-                        'diagnostics': reduce(
-                            lambda acc, diags: acc + (cast(list, diags) or []),
-                            state.aggregate.values(),
-                            [],
-                        ),
-                    },
-                )
-
-            async def send_aggregated_on_timeout():
-                """Wait for timeout, then send aggregated diagnostics."""
-                await asyncio.sleep(
-                    self.get_aggregation_timeout_ms(method) / 1000.0
-                )
-                await send_aggregated()
-
             # If already dispatched, re-send with updated aggregation
             if state.dispatched:
                 debug("Re-sending enhanced aggregation for tardy diagnostics")
-                await send_aggregated()
+                await self._send_aggregated_diagnostics(uri, state, method)
             # Check if this is the first diagnostic for this document
             elif len(state.aggregate) == 1:
-                state.timeout_task = asyncio.create_task(
-                    send_aggregated_on_timeout()
-                )
-            elif state.aggregate.keys() == self.server_by_id.keys():
-                await send_aggregated()
+                # Start timeout task
+                async def send_on_timeout():
+                    await asyncio.sleep(
+                        self.get_aggregation_timeout_ms(method) / 1000.0
+                    )
+                    await self._send_aggregated_diagnostics(uri, state, method)
+
+                state.timeout_task = asyncio.create_task(send_on_timeout())
+            elif self._is_aggregation_complete(state):
+                # All servers (push + pull) have responded, send immediately
+                await self._send_aggregated_diagnostics(uri, state, method)
 
             return
 
