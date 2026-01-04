@@ -11,6 +11,7 @@ from .json import JSON
 from .util import (
     dmerge,
     is_scalar,
+    debug,
 )
 
 
@@ -27,7 +28,7 @@ class Server:
 class DocumentState:
     """State for tracking diagnostics for a document."""
 
-    tracked_version: int
+    docver: int
     aggregate: dict[int, list] = field(default_factory=dict)  # server_id -> diagnostics
     timeout_task: Optional[asyncio.Task] = None
     dispatched: bool = False
@@ -136,7 +137,7 @@ class LspLogic:
             if version is None:
                 self.document_state.pop(uri, None)
             else:
-                self.document_state[uri] = DocumentState(tracked_version=version)
+                self.document_state[uri] = DocumentState(docver=version)
 
         if method in ('textDocument/didOpen', 'textDocument/didChange'):
             text_doc = params.get('textDocument', {})
@@ -176,7 +177,7 @@ class LspLogic:
         Handle server notifications and forward to client.
         """
         # Special handling for diagnostics aggregation
-        if method == 'textDocument/publishDiagnostics':
+        if method == 'textDocument/publishDiagnostics' and (uri := params.get('uri')) and (state := self.document_state.get(uri)):
             # Add source attribution
             diagnostics = params.get('diagnostics', [])
             for diag in diagnostics:
@@ -184,41 +185,30 @@ class LspLogic:
                     diag['source'] = source.name
 
             # Check version - drop stale diagnostics
-            uri = params.get('uri')
-            if not uri or (state := self.document_state.get(uri)) is None:
-                # Unknown document, forward as-is
-                await self.send_notification(method, params)
+            if (version := params.get('version')) and version != state.docver:
                 return
 
-            tracked_version = state.tracked_version
-            version = params.get('version')
-            if version is None:
-                version = tracked_version
-            elif version != tracked_version:
-                # Drop stale diagnostics
+            if state.dispatched:
+                debug("Dropping tardy diagnostics")
                 return
 
             # Update aggregate with this server's diagnostics
-            server_id = id(source)
-            state.aggregate[server_id] = diagnostics
+            state.aggregate[id(source)] = diagnostics
 
             async def send_aggregated():
                 """Send aggregated diagnostics (cancels timeout if needed)."""
-                if state.dispatched:
-                    return
                 state.dispatched = True
                 if state.timeout_task:
                     state.timeout_task.cancel()
-                # Merge all diagnostics from all servers
-                all_diags = []
-                for diags in state.aggregate.values():
-                    all_diags.extend(diags)
-                aggregated_params = {
+
+                await self.send_notification(method, {
                     'uri': uri,
-                    'version': version,
-                    'diagnostics': all_diags,
-                }
-                await self.send_notification(method, aggregated_params)
+                    'version': state.docver,
+                    'diagnostics': reduce(
+                        lambda acc, diags: acc + (cast(list, diags) or []),
+                        state.aggregate.values(), []
+                    ),
+                })
 
             async def send_aggregated_on_timeout():
                 """Wait for timeout, then send aggregated diagnostics."""
@@ -227,10 +217,8 @@ class LspLogic:
 
             # Check if this is the first diagnostic for this document
             if len(state.aggregate) == 1:
-                # Start timeout
                 state.timeout_task = asyncio.create_task(send_aggregated_on_timeout())
             elif state.aggregate.keys() == self.server_by_id.keys():
-                # We have diagnostics from all servers, send immediately
                 await send_aggregated()
 
             return
@@ -274,38 +262,10 @@ class LspLogic:
             caps = payload.get('capabilities')
             server.caps = caps.copy() if caps else {}
 
-    def get_notif_aggregation_key(
-        self, method: str | None, payload: JSON
-    ) -> tuple[tuple, bool] | str | None:
-        """
-        Get aggregation info for notifications that need aggregation.
-        Returns None if this notification doesn't need aggregation.
-        Returns "drop" if message should be dropped (stale version).
-        """
-        if method == 'textDocument/publishDiagnostics':
-            if (uri := payload.get('uri')) and (
-                probe := self.document_versions.get(uri)
-            ):
-                tracked_version = probe["tracked_version"]
-                version = payload.get('version')
-                if version is None:
-                    version = tracked_version
-                elif version != tracked_version:
-                    return "drop"
-                had_diags = probe["has_some_diags"]
-                probe["has_some_diags"] = True
-                return (('notification', method, uri), not had_diags)
-
-        return None
-
     def get_aggregation_timeout_ms(self, method: str | None) -> int:
         """
         Get timeout in milliseconds for this aggregation.
         """
-        if method == 'textDocument/publishDiagnostics':
-            return 1000
-
-        # Default for responses
         return 2500
 
     def aggregate_payloads(
@@ -325,18 +285,7 @@ class LspLogic:
         # Otherwise, skip errors and aggregate successful responses
         items = [item for item in items if not item.is_error]
 
-        if method == 'textDocument/publishDiagnostics':
-
-            def merge_diags(acc, item):
-                p = cast(JSON, item.payload)
-                for diag in p.get('diagnostics', []):
-                    if 'source' not in diag:
-                        diag['source'] = item.server.name
-                return dmerge(acc, p)
-
-            res = reduce(merge_diags, items, {})
-
-        elif method == 'textDocument/codeAction':
+        if method == 'textDocument/codeAction':
             res = reduce(
                 lambda acc, item: acc + (cast(list, item.payload) or []), items, []
             )
