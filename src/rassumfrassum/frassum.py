@@ -2,9 +2,10 @@
 LSP-specific message routing and merging logic.
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import cast, Callable, Awaitable
+from typing import cast, Callable, Awaitable, Optional
 
 from .json import JSON
 from .util import (
@@ -20,6 +21,16 @@ class Server:
     name: str
     caps: JSON = field(default_factory=dict)
     cookie: object = None
+
+
+@dataclass
+class DocumentState:
+    """State for tracking diagnostics for a document."""
+
+    tracked_version: int
+    aggregate: dict[int, list] = field(default_factory=dict)  # server_id -> diagnostics
+    timeout_task: Optional[asyncio.Task] = None
+    dispatched: bool = False
 
 
 @dataclass
@@ -42,8 +53,8 @@ class LspLogic:
         """Initialize with all servers and a notification sender."""
         self.servers = servers
         self.send_notification = send_notification
-        # Track document versions: URI -> version number
-        self.document_versions: dict[str, dict] = {}
+        # Track document state: URI -> DocumentState
+        self.document_state: dict[str, DocumentState] = {}
         # Map server ID to server object for data recovery
         self.server_by_id: dict[int, Server] = {id(s): s for s in servers}
 
@@ -117,31 +128,25 @@ class LspLogic:
         """
         Handle client notifications to track document state.
         """
-        if method == 'textDocument/didOpen':
-            text_doc = params.get('textDocument', {})
-            uri = text_doc.get('uri')
-            version = text_doc.get('version')
-            if uri is not None and version is not None:
-                self.document_versions[uri] = {
-                    'tracked_version': version,
-                    'has_some_diags': False,
-                }
 
-        elif method == 'textDocument/didChange':
+        def reset_state(uri: str, version: Optional[int]):
+            """Reset document state. If version is None, close the document."""
+            if (state := self.document_state.get(uri)) and state.timeout_task:
+                state.timeout_task.cancel()
+            if version is None:
+                self.document_state.pop(uri, None)
+            else:
+                self.document_state[uri] = DocumentState(tracked_version=version)
+
+        if method in ('textDocument/didOpen', 'textDocument/didChange'):
             text_doc = params.get('textDocument', {})
-            uri = text_doc.get('uri')
-            version = text_doc.get('version')
-            if uri is not None and version is not None:
-                self.document_versions[uri] = {
-                    'tracked_version': version,
-                    'has_some_diags': False,
-                }
+            if (uri := text_doc.get('uri')) is not None:
+                reset_state(uri, text_doc.get('version'))
 
         elif method == 'textDocument/didClose':
             text_doc = params.get('textDocument', {})
-            uri = text_doc.get('uri')
-            if uri is not None:
-                self.document_versions.pop(uri, None)
+            if (uri := text_doc.get('uri')) is not None:
+                reset_state(uri, None)
 
     async def on_client_response(
         self,
@@ -170,26 +175,67 @@ class LspLogic:
         """
         Handle server notifications and forward to client.
         """
-        # Special handling for diagnostics
+        # Special handling for diagnostics aggregation
         if method == 'textDocument/publishDiagnostics':
             # Add source attribution
-            for diag in params.get('diagnostics', []):
+            diagnostics = params.get('diagnostics', [])
+            for diag in diagnostics:
                 if 'source' not in diag:
                     diag['source'] = source.name
 
             # Check version - drop stale diagnostics
-            if (uri := params.get('uri')) and (
-                probe := self.document_versions.get(uri)
-            ):
-                tracked_version = probe["tracked_version"]
-                version = params.get('version')
-                if version is None:
-                    version = tracked_version
-                elif version != tracked_version:
-                    # Drop stale diagnostics
-                    return
+            uri = params.get('uri')
+            if not uri or (state := self.document_state.get(uri)) is None:
+                # Unknown document, forward as-is
+                await self.send_notification(method, params)
+                return
 
-        # Forward notification to client
+            tracked_version = state.tracked_version
+            version = params.get('version')
+            if version is None:
+                version = tracked_version
+            elif version != tracked_version:
+                # Drop stale diagnostics
+                return
+
+            # Update aggregate with this server's diagnostics
+            server_id = id(source)
+            state.aggregate[server_id] = diagnostics
+
+            async def send_aggregated():
+                """Send aggregated diagnostics (cancels timeout if needed)."""
+                if state.dispatched:
+                    return
+                state.dispatched = True
+                if state.timeout_task:
+                    state.timeout_task.cancel()
+                # Merge all diagnostics from all servers
+                all_diags = []
+                for diags in state.aggregate.values():
+                    all_diags.extend(diags)
+                aggregated_params = {
+                    'uri': uri,
+                    'version': version,
+                    'diagnostics': all_diags,
+                }
+                await self.send_notification(method, aggregated_params)
+
+            async def send_aggregated_on_timeout():
+                """Wait for timeout, then send aggregated diagnostics."""
+                await asyncio.sleep(self.get_aggregation_timeout_ms(method) / 1000.0)
+                await send_aggregated()
+
+            # Check if this is the first diagnostic for this document
+            if len(state.aggregate) == 1:
+                # Start timeout
+                state.timeout_task = asyncio.create_task(send_aggregated_on_timeout())
+            elif state.aggregate.keys() == self.server_by_id.keys():
+                # We have diagnostics from all servers, send immediately
+                await send_aggregated()
+
+            return
+
+        # Forward other notifications immediately
         await self.send_notification(method, params)
 
     async def on_server_response(
