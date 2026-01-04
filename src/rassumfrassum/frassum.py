@@ -4,7 +4,7 @@ LSP-specific message routing and merging logic.
 
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import cast
+from typing import cast, Callable, Awaitable
 
 from .json import JSON
 from .util import (
@@ -34,9 +34,14 @@ class PayloadItem:
 class LspLogic:
     """Decide on message routing and response aggregation."""
 
-    def __init__(self, servers: list[Server]):
-        """Initialize with all servers."""
+    def __init__(
+        self,
+        servers: list[Server],
+        send_notification: Callable[[str, JSON], Awaitable[None]],
+    ):
+        """Initialize with all servers and a notification sender."""
         self.servers = servers
+        self.send_notification = send_notification
         # Track document versions: URI -> version number
         self.document_versions: dict[str, dict] = {}
         # Map server ID to server object for data recovery
@@ -50,7 +55,7 @@ class LspLogic:
 
         Args:
             method: LSP method name
-            params: Request parameters
+            params: Request parmeters
             servers: List of available servers (primary first)
 
         Returns:
@@ -163,13 +168,29 @@ class LspLogic:
         self, method: str, params: JSON, source: Server
     ) -> None:
         """
-        Handle server notifications.
+        Handle server notifications and forward to client.
         """
-        # Add source attribution to diagnostics
+        # Special handling for diagnostics
         if method == 'textDocument/publishDiagnostics':
+            # Add source attribution
             for diag in params.get('diagnostics', []):
                 if 'source' not in diag:
                     diag['source'] = source.name
+
+            # Check version - drop stale diagnostics
+            if (uri := params.get('uri')) and (
+                probe := self.document_versions.get(uri)
+            ):
+                tracked_version = probe["tracked_version"]
+                version = params.get('version')
+                if version is None:
+                    version = tracked_version
+                elif version != tracked_version:
+                    # Drop stale diagnostics
+                    return
+
+        # Forward notification to client
+        await self.send_notification(method, params)
 
     async def on_server_response(
         self,

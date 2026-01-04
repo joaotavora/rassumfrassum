@@ -148,7 +148,6 @@ async def run_multiplexer(
 
         logic_class = getattr(frassum, class_name)
     log(f"Logic class: {logic_class}")
-    logic = logic_class([p.server for p in procs])
 
     # Track ongoing aggregations: key -> AggregationState
     pending_aggregations: dict[tuple, AggregationState] = {}
@@ -190,6 +189,18 @@ async def run_multiplexer(
             asyncio.create_task(delayed_send())
         else:
             await send()
+
+    async def send_notification_to_client(method: str, payload: JSON):
+        """Send a notification to the client (for use by logic layer)."""
+        message = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": payload,
+        }
+        await _send_to_client(message, method)
+
+    # Instantiate logic with send_notification callback
+    logic = logic_class([p.server for p in procs], send_notification_to_client)
 
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
@@ -430,13 +441,8 @@ async def run_multiplexer(
                     await _send_to_client(remapped_msg, method, "<-s")
                     continue
 
-                # Server response OR Server notification
-                aggregation_key = None
-                responders = set(procs)  # responses can override this
-                is_error = False
-
                 if method is None:
-                    # Response - lookup method and params from request tracking
+                    # Server response - lookup method and params from request tracking
                     request_info = inflight_requests.get(req_id)
                     if not request_info:
                         log(f"Dropping response to unknown {req_id}")
@@ -461,36 +467,22 @@ async def run_multiplexer(
                     if len(responders) == 1:
                         await _send_to_client(msg, method)
                         continue
+
+                    # Response aggregation
                     aggregation_key = ("response", req_id)
-                    start_anew = False
+                    item = PayloadItem(payload, proc.server, is_error)
+                    if ag := pending_aggregations.get(aggregation_key):
+                        await _continue_aggregation(item, ag)
+                    else:
+                        _start_aggregation(
+                            item, aggregation_key, method, responders, req_id
+                        )
                 else:
+                    # Server notification - let logic layer handle it
                     log_message(f"[{proc.name}] <--", msg, method)
                     payload = msg.get("params", {})
                     await logic.on_server_notification(
                         method, cast(JSON, payload), proc.server
-                    )
-                    aggregation_data = logic.get_notif_aggregation_key(
-                        method, payload
-                    )
-                    # Logic can still dictate that aggregation will be
-                    # skipped.
-                    if aggregation_data == "drop":
-                        log(f"Dropping message from {proc.name}: {method}")
-                        continue
-                    if aggregation_data is None:
-                        await _send_to_client(msg, method)
-                        continue
-                    (aggregation_key, start_anew) = aggregation_data
-
-                # If we haven't continued the loop and we got here, aggregate
-                item = PayloadItem(payload, proc.server, is_error)
-                if ag := not start_anew and pending_aggregations.get(
-                    aggregation_key
-                ):
-                    await _continue_aggregation(item, ag)
-                else:
-                    _start_aggregation(
-                        item, aggregation_key, method, responders, req_id
                     )
 
         except RuntimeError:
