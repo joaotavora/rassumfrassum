@@ -21,7 +21,7 @@ for d in $TEST_DIRS; do
     n=$(basename "$d")
     printf "%-35s " "$n"
 
-    output=$(timeout 6 "$d/run.sh" 2>&1)
+    output=$(timeout 10 "$d/run.sh" 2>&1)
     rc=$?
 
     case $rc in
