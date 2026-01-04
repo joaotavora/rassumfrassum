@@ -150,7 +150,7 @@ async def run_multiplexer(
     log(f"Logic class: {logic_class}")
 
     # Track ongoing aggregations: key -> AggregationState
-    pending_aggregations: dict[tuple, AggregationState] = {}
+    response_aggregations: dict[int, AggregationState] = {}
 
     # Track which request IDs need aggregation: id -> (method, params)
     inflight_requests = {}
@@ -225,7 +225,7 @@ async def run_multiplexer(
             }
 
     def _start_aggregation(
-        item, aggregation_key, method, responders, req_id
+        item, req_id, method, responders
     ):
         """Start a new aggregation with the first message."""
         proc = cast(InferiorProcess, item.server.cookie)
@@ -252,7 +252,7 @@ async def run_multiplexer(
         ag.timeout_task = asyncio.create_task(
             send_whatever_is_there(ag, method)
         )
-        pending_aggregations[aggregation_key] = ag
+        response_aggregations[req_id] = ag
 
     async def _continue_aggregation(item, ag):
         """Continue an existing aggregation with an additional message."""
@@ -264,28 +264,15 @@ async def run_multiplexer(
 
         if ag.dispatched:
             debug(
-                f"Tardy {item.server.name} aggregation for {method} ({id(ag)})"
+                f"Tardy response from {item.server.name} for {method} ({id(ag)})"
             )
+            return
 
         ag.aggregate[id(proc)] = item
         ag.outstanding.discard(proc)
 
         if not ag.outstanding:
-            # Aggregation is now complete
-            if ag.dispatched == "timed-out":
-                warn(
-                    f"Dropping tardy message for previously timed-out "
-                    f"aggregation for {method} ({id(ag)})"
-                )
-                return
-            elif ag.dispatched:
-                warn(
-                    f"Dropping tardy message for previously completed "
-                    f"aggregation for {method} ({id(ag)})!"
-                )
-                return
-            else:
-                debug(f"Completing aggregation for {method} ({id(ag)})!")
+            debug(f"Completing aggregation for {method} ({id(ag)})!")
 
             # Cancel timeout
             if ag.timeout_task:
@@ -430,6 +417,7 @@ async def run_multiplexer(
                     continue
 
                 if method is None:
+                    req_id = cast(int, req_id)
                     # Server response - lookup method and params from request tracking
                     request_info = inflight_requests.get(req_id)
                     if not request_info:
@@ -457,13 +445,12 @@ async def run_multiplexer(
                         continue
 
                     # Response aggregation
-                    aggregation_key = ("response", req_id)
                     item = PayloadItem(payload, proc.server, is_error)
-                    if ag := pending_aggregations.get(aggregation_key):
+                    if ag := response_aggregations.get(req_id):
                         await _continue_aggregation(item, ag)
                     else:
                         _start_aggregation(
-                            item, aggregation_key, method, responders, req_id
+                            item, req_id, method, responders
                         )
                 else:
                     # Server notification - let logic layer handle it
