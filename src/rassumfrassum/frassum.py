@@ -29,7 +29,9 @@ class DocumentState:
     """State for tracking diagnostics for a document."""
 
     docver: int
-    aggregate: dict[int, list] = field(default_factory=dict)  # server_id -> diagnostics
+    aggregate: dict[int, list] = field(
+        default_factory=dict
+    )  # server_id -> diagnostics
     timeout_task: Optional[asyncio.Task] = None
     dispatched: bool = False
 
@@ -177,7 +179,11 @@ class LspLogic:
         Handle server notifications and forward to client.
         """
         # Special handling for diagnostics aggregation
-        if method == 'textDocument/publishDiagnostics' and (uri := params.get('uri')) and (state := self.document_state.get(uri)):
+        if (
+            method == 'textDocument/publishDiagnostics'
+            and (uri := params.get('uri'))
+            and (state := self.document_state.get(uri))
+        ):
             # Add source attribution
             diagnostics = params.get('diagnostics', [])
             for diag in diagnostics:
@@ -197,18 +203,24 @@ class LspLogic:
                 if state.timeout_task:
                     state.timeout_task.cancel()
 
-                await self.send_notification(method, {
-                    'uri': uri,
-                    'version': state.docver,
-                    'diagnostics': reduce(
-                        lambda acc, diags: acc + (cast(list, diags) or []),
-                        state.aggregate.values(), []
-                    ),
-                })
+                await self.send_notification(
+                    method,
+                    {
+                        'uri': uri,
+                        'version': state.docver,
+                        'diagnostics': reduce(
+                            lambda acc, diags: acc + (cast(list, diags) or []),
+                            state.aggregate.values(),
+                            [],
+                        ),
+                    },
+                )
 
             async def send_aggregated_on_timeout():
                 """Wait for timeout, then send aggregated diagnostics."""
-                await asyncio.sleep(self.get_aggregation_timeout_ms(method) / 1000.0)
+                await asyncio.sleep(
+                    self.get_aggregation_timeout_ms(method) / 1000.0
+                )
                 await send_aggregated()
 
             # If already dispatched, re-send with updated aggregation
@@ -217,7 +229,9 @@ class LspLogic:
                 await send_aggregated()
             # Check if this is the first diagnostic for this document
             elif len(state.aggregate) == 1:
-                state.timeout_task = asyncio.create_task(send_aggregated_on_timeout())
+                state.timeout_task = asyncio.create_task(
+                    send_aggregated_on_timeout()
+                )
             elif state.aggregate.keys() == self.server_by_id.keys():
                 await send_aggregated()
 
@@ -287,7 +301,9 @@ class LspLogic:
 
         if method == 'textDocument/codeAction':
             res = reduce(
-                lambda acc, item: acc + (cast(list, item.payload) or []), items, []
+                lambda acc, item: acc + (cast(list, item.payload) or []),
+                items,
+                [],
             )
 
         elif method == 'textDocument/completion':

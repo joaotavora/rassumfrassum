@@ -224,9 +224,7 @@ async def run_multiplexer(
                 "params": payload,
             }
 
-    def _start_aggregation(
-        item, req_id, method, responders
-    ):
+    def _start_aggregation(item, req_id, method, responders):
         """Start a new aggregation with the first message."""
         proc = cast(InferiorProcess, item.server.cookie)
         outstanding = responders.copy()
@@ -449,9 +447,7 @@ async def run_multiplexer(
                     if ag := response_aggregations.get(req_id):
                         await _continue_aggregation(item, ag)
                     else:
-                        _start_aggregation(
-                            item, req_id, method, responders
-                        )
+                        _start_aggregation(item, req_id, method, responders)
                 else:
                     # Server notification - let logic layer handle it
                     log_message(f"[{proc.name}] <--", msg, method)
