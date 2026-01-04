@@ -273,29 +273,17 @@ async def run_multiplexer(
         if not ag.outstanding:
             # Aggregation is now complete
             if ag.dispatched == "timed-out":
-                if opts.drop_tardy:
-                    warn(
-                        f"Dropping tardy message for previously timed-out "
-                        f"aggregation for {method} ({id(ag)})"
-                    )
-                    return
-                else:
-                    debug(
-                        f"Re-sending now-complete timed-out "
-                        f"aggregation for {method} ({id(ag)})!"
-                    )
+                warn(
+                    f"Dropping tardy message for previously timed-out "
+                    f"aggregation for {method} ({id(ag)})"
+                )
+                return
             elif ag.dispatched:
-                if opts.drop_tardy:
-                    warn(
-                        f"Dropping tardy message for previously completed "
-                        f"aggregation for {method} ({id(ag)})!"
-                    )
-                    return
-                else:
-                    debug(
-                        f"Re-sending enhancement of previously completed "
-                        f"aggregation for {method} ({id(ag)})!"
-                    )
+                warn(
+                    f"Dropping tardy message for previously completed "
+                    f"aggregation for {method} ({id(ag)})!"
+                )
+                return
             else:
                 debug(f"Completing aggregation for {method} ({id(ag)})!")
 
