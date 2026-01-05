@@ -112,6 +112,11 @@ class LspTestEndpoint:
                 log(self.name, f"Skipping notification: {msg.get('method')}")
                 continue
 
+            # Skip server requests (have both 'id' and 'method')
+            if 'method' in msg:
+                log(self.name, f"Skipping server request: {msg.get('method')} id={msg['id']}")
+                continue
+
             # Check if it's the response we want
             if msg['id'] == req_id:
                 return msg
