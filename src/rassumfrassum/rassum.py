@@ -200,7 +200,7 @@ async def run_multiplexer(
         await _send_to_client(message, method)
 
     # Instantiate logic with send_notification callback
-    logic = logic_class([p.server for p in procs], send_notification_to_client)
+    logic = logic_class([p.server for p in procs], send_notification_to_client, opts)
 
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""

@@ -55,10 +55,12 @@ class LspLogic:
         self,
         servers: list[Server],
         send_notification: Callable[[str, JSON], Awaitable[None]],
+        opts,
     ):
-        """Initialize with all servers and a notification sender."""
+        """Initialize with all servers, a notification sender, and options."""
         self.primary = servers[0]
         self.send_notification = send_notification
+        self.opts = opts
         # Track document state: URI -> DocumentState
         self.document_state: dict[str, DocumentState] = {}
         # Map server ID to server object for data recovery
@@ -248,10 +250,14 @@ class LspLogic:
             # Update aggregate with this server's diagnostics
             state.inflight_pushes[id(source)] = diagnostics
 
-            # If already dispatched, re-send with updated aggregation
+            # If already dispatched, decide whether to re-send or drop
             if state.dispatched:
-                debug("Re-sending enhanced aggregation for tardy diagnostics")
-                await self._publish_pushdiags(uri, state)
+                if self.opts.drop_tardy:
+                    debug("Dropping tardy diagnostics")
+                    return
+                else:
+                    debug("Re-sending enhanced aggregation for tardy diagnostics")
+                    await self._publish_pushdiags(uri, state)
             elif self._pushdiags_complete(state):
                 # All servers (push + pull) have responded, send immediately
                 await self._publish_pushdiags(uri, state)
@@ -311,6 +317,8 @@ class LspLogic:
         """
         Get timeout in milliseconds for this aggregation.
         """
+        if method == 'textDocument/publishDiagnostics':
+            return 1000
         return 2500
 
     def aggregate_response_payloads(
