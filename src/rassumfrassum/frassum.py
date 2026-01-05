@@ -97,6 +97,11 @@ class LspLogic:
 
         # initialize and shutdown go to all servers
         if method in ['initialize', 'shutdown']:
+            # Force UTF-16 encoding to avoid position mismatches (#8)
+            if method == 'initialize' and (
+                g := params['capabilities'].get('general')
+            ):
+                g['positionEncodings'] = ['utf-16']
             return servers
 
         # Route requests to _all_ servers supporting this
