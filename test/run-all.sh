@@ -57,6 +57,7 @@ done
 echo
 echo "$PASSED passed, $FAILED failed, $SKIPPED skipped, $TIMEDOUT timed out"
 
+rc=0
 if [ $FAILED -gt 0 ]; then
     echo "Failed tests:"
     for test in "${FAILED_TESTS[@]}"; do
