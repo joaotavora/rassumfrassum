@@ -134,18 +134,17 @@ class LspLogic:
                 (text_doc := params.get('textDocument'))
                 and (uri := text_doc.get('uri'))
                 and (state := self.document_state.get(uri))
-                and (target := next((
-                        s for s in servers if s.caps.get('diagnosticProvider')
-                    ), None))
+                and (targets := [s for s in servers if s.caps.get('diagnosticProvider')])
             ):
-                # Register inflight pull for this server
-                state.inflight_pulls[id(target)] = None
+                # Register inflight pulls for all target servers
+                for target in targets:
+                    state.inflight_pulls[id(target)] = None
 
-                # Check if this completes the aggregation
+                # Check if this helps completes an ongoing push aggregation
                 if self._pushdiags_complete(state):
                     await self._publish_pushdiags(uri, state)
 
-                return [target]
+                return targets
             return []
 
         # Default: route to primary server
@@ -194,15 +193,16 @@ class LspLogic:
         Handle server requests to the client.
         """
         pass
-
+ 
     def _pushdiags_complete(self, state: DocumentState) -> bool:
         """Check if diagnostic aggregation is complete for a document."""
+        # Don't send empty aggregations - need at least one push diagnostic
+        if not state.inflight_pushes:
+            return False
         # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
-        retval = (
+        return (
             state.inflight_pushes.keys() | state.inflight_pulls.keys()
         ) == self.server_by_id.keys()
-
-        return retval
 
     async def _publish_pushdiags(self, uri: str, state: DocumentState) -> None:
         """Send aggregated diagnostics to the client."""
@@ -330,7 +330,21 @@ class LspLogic:
         # Otherwise, skip errors and aggregate successful responses
         items = [item for item in items if not item.is_error]
 
-        if method == 'textDocument/codeAction':
+        if method == 'textDocument/diagnostic':
+            all_items = []
+            for item in items:
+                p = cast(JSON, item.payload)
+                diagnostics = p.get('items', [])
+                # Add source attribution
+                for diag in diagnostics:
+                    if 'source' not in diag:
+                        diag['source'] = item.server.name
+                all_items.extend(diagnostics)
+            # FIXME: JT@2026-01-05: we elide any 'resultId', which
+            # means we're missing out on that optimization
+            res = {'items': all_items, 'kind': "full"}
+
+        elif method == 'textDocument/codeAction':
             res = reduce(
                 lambda acc, item: acc + (cast(list, item.payload) or []),
                 items,
