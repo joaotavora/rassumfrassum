@@ -192,6 +192,9 @@ async def run_multiplexer(
 
     async def send_notification_to_client(method: str, payload: JSON):
         """Send a notification to the client (for use by logic layer)."""
+        if shutting_down:
+            debug(f"Skipping notification to client (shutting down): {method}")
+            return
         message = {
             "jsonrpc": "2.0",
             "method": method,
