@@ -72,7 +72,7 @@ class LspLogic:
 
         Args:
             method: LSP method name
-            params: Request parmeters
+            params: Request parameters
             servers: List of available servers (primary first)
 
         Returns:
@@ -313,7 +313,7 @@ class LspLogic:
         """
         return 2500
 
-    def aggregate_payloads(
+    def aggregate_response_payloads(
         self,
         method: str,
         items: list[PayloadItem],

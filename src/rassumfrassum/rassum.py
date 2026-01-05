@@ -205,7 +205,7 @@ async def run_multiplexer(
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
 
-        payload, is_error = logic.aggregate_payloads(
+        payload, is_error = logic.aggregate_response_payloads(
             ag.method, list(ag.aggregate.values())
         )
 
@@ -315,6 +315,10 @@ async def run_multiplexer(
                     if method == "shutdown":
                         shutting_down = True
                     # Determine which servers to route to.
+                    # JT@2026-01-05: FIXME: We need a way for
+                    # on_client_request to signal an error if
+                    # something silly happened so we can immediately
+                    # send that error to the client as the response.
                     target_servers = await logic.on_client_request(
                         method, params, [proc.server for proc in procs]
                     )
