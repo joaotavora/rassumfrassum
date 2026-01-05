@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import sys
 
+from . import __version__
 from .preset import load_preset
 from .rassum import run_multiplexer
 from .util import (
@@ -70,6 +71,9 @@ def main() -> None:
         add_help=True,
     )
 
+    parser.add_argument(
+        '--version', action='version', version=f'%(prog)s {__version__}'
+    )
     parser.add_argument(
         'preset', nargs='?', help='Preset name or path to preset file'
     )
