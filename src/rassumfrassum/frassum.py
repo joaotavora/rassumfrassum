@@ -34,8 +34,8 @@ class DocumentState:
     )  # server_id -> diagnostics
     inflight_pulls: dict[int, None] = field(
         default_factory=dict
-    )  # server_id -> None (acts as a set)
-    timeout_task: Optional[asyncio.Task] = None
+    )  # server_id -> None (acts as a set for now)
+    push_diags_timer: Optional[asyncio.Task] = None
     dispatched: bool = False
 
 
@@ -64,7 +64,7 @@ class LspLogic:
         # Track document state: URI -> DocumentState
         self.document_state: dict[str, DocumentState] = {}
         # Map server ID to server object for data recovery
-        self.server_by_id: dict[int, Server] = {id(s): s for s in servers}
+        self.servers: dict[int, Server] = {id(s): s for s in servers}
 
     async def on_client_request(
         self, method: str, params: JSON, servers: list[Server]
@@ -89,7 +89,7 @@ class LspLogic:
         if (
             isinstance(data, dict)
             and (probe := data.get('frassum-server'))
-            and (target := self.server_by_id.get(probe))
+            and (target := self.servers.get(probe))
         ):
             # Replace with original data
             params['data'] = data.get('frassum-data')
@@ -161,24 +161,31 @@ class LspLogic:
         """
         Handle client notifications to track document state.
         """
+
         def reset_state(uri: str, version: Optional[int]):
             """Reset document state. If version is None, close the document."""
-            if (state := self.document_state.get(uri)) and state.timeout_task:
-                state.timeout_task.cancel()
+            if (
+                state := self.document_state.get(uri)
+            ) and state.push_diags_timer:
+                state.push_diags_timer.cancel()
             if version is None:
                 self.document_state.pop(uri, None)
             else:
                 self.document_state[uri] = DocumentState(docver=version)
 
-        if method in ('textDocument/didOpen', 'textDocument/didChange'):
-            text_doc = params.get('textDocument', {})
-            if (uri := text_doc.get('uri')) is not None:
-                reset_state(uri, text_doc.get('version'))
-
-        elif method == 'textDocument/didClose':
-            text_doc = params.get('textDocument', {})
-            if (uri := text_doc.get('uri')) is not None:
-                reset_state(uri, None)
+        if method in (
+            'textDocument/didOpen',
+            'textDocument/didChange',
+            'textDocument/didClose',
+        ):
+            doc = params.get('textDocument', {})
+            if (uri := doc.get('uri')) is not None:
+                v = (
+                    None
+                    if method == 'textDocument/didClose'
+                    else doc.get('version')
+                )
+                reset_state(uri, v)
 
     async def on_client_response(
         self,
@@ -200,35 +207,6 @@ class LspLogic:
         Handle server requests to the client.
         """
         pass
- 
-    def _pushdiags_complete(self, state: DocumentState) -> bool:
-        """Check if diagnostic aggregation is complete for a document."""
-        # Don't send empty aggregations - need at least one push diagnostic
-        if not state.inflight_pushes:
-            return False
-        # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
-        return (
-            state.inflight_pushes.keys() | state.inflight_pulls.keys()
-        ) == self.server_by_id.keys()
-
-    async def _publish_pushdiags(self, uri: str, state: DocumentState) -> None:
-        """Send aggregated diagnostics to the client."""
-        state.dispatched = True
-        if state.timeout_task:
-            state.timeout_task.cancel()
-
-        await self.send_notification(
-            'textDocument/publishDiagnostics',
-            {
-                'uri': uri,
-                'version': state.docver,
-                'diagnostics': reduce(
-                    lambda acc, diags: acc + (cast(list, diags) or []),
-                    state.inflight_pushes.values(),
-                    [],
-                ),
-            },
-        )
 
     async def on_server_notification(
         self, method: str, params: JSON, source: Server
@@ -275,7 +253,7 @@ class LspLogic:
                     )
                     await self._publish_pushdiags(uri, state)
 
-                state.timeout_task = asyncio.create_task(send_on_timeout())
+                state.push_diags_timer = asyncio.create_task(send_on_timeout())
 
             return
 
@@ -472,3 +450,32 @@ class LspLogic:
             'frassum-server': id(server),
             'frassum-data': original_data,
         }
+
+    def _pushdiags_complete(self, state: DocumentState) -> bool:
+        """Check if diagnostic aggregation is complete for a document."""
+        # Don't send empty aggregations - need at least one push diagnostic
+        if not state.inflight_pushes:
+            return False
+        # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
+        return (
+            state.inflight_pushes.keys() | state.inflight_pulls.keys()
+        ) == self.servers.keys()
+
+    async def _publish_pushdiags(self, uri: str, state: DocumentState) -> None:
+        """Send aggregated diagnostics to the client."""
+        state.dispatched = True
+        if state.push_diags_timer:
+            state.push_diags_timer.cancel()
+
+        await self.send_notification(
+            'textDocument/publishDiagnostics',
+            {
+                'uri': uri,
+                'version': state.docver,
+                'diagnostics': reduce(
+                    lambda acc, diags: acc + (cast(list, diags) or []),
+                    state.inflight_pushes.values(),
+                    [],
+                ),
+            },
+        )
