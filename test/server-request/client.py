@@ -15,12 +15,15 @@ async def main():
     await client.initialize()
 
     # After initialized, we expect server requests for workspace/configuration
-    # Handle requests from both servers
+    # First, read both request IDs
+    request_ids = []
     for i in range(2):
         id, payload = await client.read_request('workspace/configuration')
         log("client", f"Got server request: id={id} params={payload}")
+        request_ids.append(id)
 
-        # Send response to server request
+    # Then respond to both requests
+    for id in request_ids:
         response = {
             'jsonrpc': '2.0',
             'id': id,
