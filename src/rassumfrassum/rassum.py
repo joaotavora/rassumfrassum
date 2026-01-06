@@ -12,7 +12,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, cast
 
-from .frassum import PayloadItem, Server
+from .frassum import DirectResponse, PayloadItem, Server
 from .json import (
     JSON,
 )
@@ -317,14 +317,23 @@ async def run_multiplexer(
                     # but not that bad.
                     if method == "shutdown":
                         shutting_down = True
-                    # Determine which servers to route to.
-                    # JT@2026-01-05: FIXME: We need a way for
-                    # on_client_request to signal an error if
-                    # something silly happened so we can immediately
-                    # send that error to the client as the response.
-                    target_servers = await logic.on_client_request(
+                    # Determine which servers to route to or get direct response
+                    result = await logic.on_client_request(
                         method, params, [proc.server for proc in procs]
                     )
+
+                    # Check if we should respond immediately without forwarding
+                    if isinstance(result, DirectResponse):
+                        response_msg = {
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error" if result.is_error else "result": result.payload,
+                        }
+                        await _send_to_client(response_msg, method)
+                        continue
+
+                    # Otherwise, forward to selected servers
+                    target_servers = result
                     target_procs = cast(
                         list[InferiorProcess],
                         [s.cookie for s in target_servers],
@@ -401,9 +410,24 @@ async def run_multiplexer(
                     log_message(f"[{proc.name}] <-s", msg, method)
                     # Handle server request
                     params = msg.get("params", {})
-                    await logic.on_server_request(
+                    direct_response = await logic.on_server_request(
                         method, cast(JSON, params), proc.server
                     )
+
+                    # Check if we should respond immediately without forwarding
+                    if direct_response:
+                        response_msg = {
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "error"
+                            if direct_response.is_error
+                            else "result": direct_response.payload,
+                        }
+                        await write_lsp_message(proc.stdin, response_msg)
+                        log_message(
+                            f"[{proc.name}] s->", response_msg, method
+                        )
+                        continue
 
                     # This is a request from server to client - remap ID
                     remapped_id = next_remapped_id

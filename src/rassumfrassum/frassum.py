@@ -37,6 +37,9 @@ class DocumentState:
     )  # server_id -> None (acts as a set for now)
     push_diags_timer: Optional[asyncio.Task] = None
     dispatched: bool = False
+    stashed_items: set[int] = field(
+        default_factory=set
+    )  # lean_ids of stashed completion/codeAction items
 
 
 @dataclass
@@ -46,6 +49,14 @@ class PayloadItem:
     payload: JSON | list
     server: Server
     is_error: bool
+
+
+@dataclass
+class DirectResponse:
+    """A direct response payload to send immediately without forwarding."""
+
+    payload: JSON
+    is_error: bool = False
 
 
 class LspLogic:
@@ -65,10 +76,12 @@ class LspLogic:
         self.document_state: dict[str, DocumentState] = {}
         # Map server ID to server object for data recovery
         self.servers: dict[int, Server] = {id(s): s for s in servers}
+        # Stash for lean identifiers: lean_id -> (payload, original_data, server)
+        self.stash: dict[int, tuple[JSON, JSON | None, Server]] = {}
 
     async def on_client_request(
         self, method: str, params: JSON, servers: list[Server]
-    ) -> list[Server]:
+    ) -> list[Server] | DirectResponse:
         """
         Handle client requests and determine who receives it
 
@@ -78,22 +91,22 @@ class LspLogic:
             servers: List of available servers (primary first)
 
         Returns:
-            List of servers that should receive the request
+            List of servers that should receive the request, or
+            DirectResponse to send immediately without forwarding
         """
-        # Check for data recovery from inline stash
-        data = (
-            params.get('data')
-            if params and method.endswith("resolve")
-            else None
-        )
+        # Check for data recovery from stash
         if (
-            isinstance(data, dict)
-            and (probe := data.get('frassum-server'))
-            and (target := self.servers.get(probe))
+            method.endswith("resolve")
+            and (stashed := self.stash.get(cast(int, params.get('data'))))
         ):
-            # Replace with original data
-            params['data'] = data.get('frassum-data')
-            return [target]
+            payload, original_data, server = stashed
+            if original_data is not None:
+                # Happy case: restore original data and route to server
+                params['data'] = original_data
+                return [server]
+            else:
+                # Unhappy case: no original data, respond immediately with stashed payload
+                return DirectResponse(payload=payload)
 
         # initialize and shutdown go to all servers
         if method in ['initialize', 'shutdown']:
@@ -164,10 +177,12 @@ class LspLogic:
 
         def reset_state(uri: str, version: Optional[int]):
             """Reset document state. If version is None, close the document."""
-            if (
-                state := self.document_state.get(uri)
-            ) and state.push_diags_timer:
-                state.push_diags_timer.cancel()
+            if state := self.document_state.get(uri):
+                if state.push_diags_timer:
+                    state.push_diags_timer.cancel()
+                # Clean up stashed items for this document
+                for lean_id in state.stashed_items:
+                    self.stash.pop(lean_id, None)
             if version is None:
                 self.document_state.pop(uri, None)
             else:
@@ -202,9 +217,13 @@ class LspLogic:
 
     async def on_server_request(
         self, method: str, params: JSON, source: Server
-    ) -> None:
+    ) -> DirectResponse | None:
         """
         Handle server requests to the client.
+
+        Returns:
+            DirectResponse to send immediately without forwarding, or
+            None to forward the request normally
         """
         pass
 
@@ -275,19 +294,27 @@ class LspLogic:
             return
 
         # Stash data fields in codeAction responses
-        if method == 'textDocument/codeAction':
+        if (
+            method == 'textDocument/codeAction'
+            and (uri := request_params.get('textDocument', {}).get('uri'))
+            and (doc_state := self.document_state.get(uri))
+        ):
             for action in cast(list, payload):
-                self._stash_data_maybe(action, server)
+                self._stash_data(action, server, doc_state)
 
         # Stash data fields in completion responses
-        if method == 'textDocument/completion':
+        if (
+            method == 'textDocument/completion'
+            and (uri := request_params.get('textDocument', {}).get('uri'))
+            and (doc_state := self.document_state.get(uri))
+        ):
             items = (
                 payload
                 if isinstance(payload, list)
                 else payload.get('items', [])
             )
             for item in cast(list, items):
-                self._stash_data_maybe(item, server)
+                self._stash_data(item, server, doc_state)
 
         # Extract server name and capabilities from initialize response
         if method == 'initialize':
@@ -439,17 +466,20 @@ class LspLogic:
         # Return the mutated aggregate
         return aggregate
 
-    def _stash_data_maybe(self, payload: JSON, server: Server):
-        """Stash data field with server ID inline."""
+    def _stash_data(self, payload: JSON, server: Server, doc_state: DocumentState):
+        """Stash data field with lean identifier."""
         # FIXME: investigate why payload can be None
-        if not payload or 'data' not in payload:
+        if not payload:
             return
-        # Replace data with inline dict containing server ID and original data
-        original_data = payload['data']
-        payload['data'] = {
-            'frassum-server': id(server),
-            'frassum-data': original_data,
-        }
+
+        # Stash original data (or None) and server, replace with lean id
+        original_data = payload.get('data')
+        lean_id = id(payload)
+        self.stash[lean_id] = (payload, original_data, server)
+        payload['data'] = lean_id
+
+        # Track lean_id in document state for cleanup
+        doc_state.stashed_items.add(lean_id)
 
     def _pushdiags_complete(self, state: DocumentState) -> bool:
         """Check if diagnostic aggregation is complete for a document."""

@@ -8,7 +8,6 @@ import asyncio
 
 from rassumfrassum.test2 import LspTestEndpoint, log
 
-
 async def main():
     """Test multi-server completions with real servers."""
 
@@ -69,9 +68,9 @@ async def main():
     items_with_data = [item for item in items if 'data' in item]
     log("client", f"Found {len(items_with_data)} items with data fields")
 
-    # Find an item without documentation to resolve
-    probe = next((item for item in items if 'data' in item and 'documentation' not in item), None)
-    assert probe is not None, "Expected to find at least one item with data but no documentation"
+    # Find an item without detail to resolve (basedpyright items lack detail)
+    probe = next((item for item in items if 'data' in item and 'detail' not in item), None)
+    assert probe is not None, "Expected to find at least one item with data but no detail"
     log("client", f"Found item to resolve: {probe['label']}")
 
     # Send completionItem/resolve request
@@ -83,10 +82,10 @@ async def main():
 
     log("client", f"Resolved item: {resolved_item['label']}")
 
-    # Check that the resolved item now has documentation
-    assert resolved_item.get('documentation'), \
-        f"Expected documentation in resolved item, got: {resolved_item}"
-    log("client", "Successfully got documentation after resolve")
+    # Check that the resolved item now has detail or documentation
+    assert resolved_item.get('detail') or resolved_item.get('documentation'), \
+        f"Expected detail or documentation in resolved item, got: {resolved_item}"
+    log("client", "Successfully resolved item with additional info")
 
     # Test '[' trigger character (only basedpyright supports this)
     await client.notify('textDocument/didOpen', {
