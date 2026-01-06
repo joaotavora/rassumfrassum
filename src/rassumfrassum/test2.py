@@ -81,24 +81,33 @@ class LspTestEndpoint:
 
             # Skip responses (have 'id' field)
             if 'id' in msg:
-                log(self.name, f"Skipping response: id={msg['id']}")
+                log(self.name, f"Skipping non-notification: {msg}")
                 continue
 
             # Check if it's the notification we want
             if msg.get('method') == method:
                 return msg['params']
 
-            log(self.name, f"Skipping notification: {msg.get('method')}")
+            log(self.name, f"Skipping uninteresting notification: {msg}")
 
     async def read_request(self, method) -> tuple[int, JSON]:
         """Read messages until we get a request for the given method"""
         while True:
             msg = await read_message(self.reader)
             if not msg:
-                raise EOFError(f"EOF while waiting for notification {method}")
+                raise EOFError(f"EOF while waiting for request {method}")
 
-            if 'id' in msg and msg.get('method') == method:
+            if 'id' not in msg:
+                log(self.name, f"Skipping notification: {msg}")
+                continue
+
+            if 'method' not in msg:
+                log(self.name, f"Skipping server response: {msg}")
+                continue
+
+            if  msg["method"] == method:
                 return (msg["id"], cast(JSON, msg.get('params')))
+            log(self.name, f"Skipping uninteresting request: {msg}")
 
     async def read_response(self, req_id: int) -> JSON:
         """Read messages until we get a response with the given id."""
