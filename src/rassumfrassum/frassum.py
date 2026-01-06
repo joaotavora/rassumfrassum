@@ -468,10 +468,6 @@ class LspLogic:
 
     def _stash_data(self, payload: JSON, server: Server, doc_state: DocumentState):
         """Stash data field with lean identifier."""
-        # FIXME: investigate why payload can be None
-        if not payload:
-            return
-
         # Stash original data (or None) and server, replace with lean id
         original_data = payload.get('data')
         lean_id = id(payload)
