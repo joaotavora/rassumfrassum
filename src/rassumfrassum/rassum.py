@@ -163,6 +163,11 @@ async def run_multiplexer(
     server_request_mapping: dict[ReqId, tuple[ReqId, InferiorProcess, str, JSON]] = {}
     next_remapped_id = 0
 
+    # Track rass-originated requests to servers
+    # rass_request_id -> (server, method, params, future)
+    rass_request_mapping: dict[ReqId, tuple[InferiorProcess, str, JSON, asyncio.Future]] = {}
+    next_rass_request_id = 0
+
     # Track shutdown state
     shutting_down = False
 
@@ -193,7 +198,7 @@ async def run_multiplexer(
         else:
             await send()
 
-    async def send_notification_to_client(method: str, payload: JSON):
+    async def notify_client(method: str, payload: JSON):
         """Send a notification to the client (for use by logic layer)."""
         if shutting_down:
             debug(f"Skipping notification to client (shutting down): {method}")
@@ -205,8 +210,72 @@ async def run_multiplexer(
         }
         await _send_to_client(message, method)
 
-    # Instantiate logic with send_notification callback
-    logic = logic_class([p.server for p in procs], send_notification_to_client, opts)
+    async def request_server(server: Server, method: str, payload: JSON) -> tuple[bool, JSON]:
+        """
+        Send a request to a server and wait for response (for use by logic layer).
+
+        Returns:
+            tuple of (is_error, response_payload)
+        """
+        nonlocal next_rass_request_id
+
+        if shutting_down:
+            debug(f"Skipping request to server (shutting down): {method}")
+            return (True, {"message": "Shutting down"})
+
+        # Get the proc for this server
+        proc = cast(InferiorProcess, server.cookie)
+
+        # Allocate a unique string request ID
+        rass_req_id = f"rass{next_rass_request_id}"
+        next_rass_request_id += 1
+
+        # Create a future to wait for the response
+        future: asyncio.Future[tuple[bool, JSON]] = asyncio.Future()
+
+        # Track this request
+        rass_request_mapping[rass_req_id] = (proc, method, payload, future)
+
+        # Send the request to the server
+        message = {
+            "jsonrpc": "2.0",
+            "id": rass_req_id,
+            "method": method,
+            "params": payload,
+        }
+        await write_lsp_message(proc.stdin, message)
+        log_message(f"[{proc.name}] r->", message, method)
+
+        # Wait for the response
+        try:
+            is_error, response_payload = await future
+            return (is_error, response_payload)
+        except Exception as e:
+            debug(f"Error waiting for response from {proc.name}: {e}")
+            return (True, {"message": str(e)})
+
+    async def notify_server(server: Server, method: str, payload: JSON) -> None:
+        """
+        Send a notification to a server (for use by logic layer).
+        """
+        if shutting_down:
+            debug(f"Skipping notification to server (shutting down): {method}")
+            return
+
+        # Get the proc for this server
+        proc = cast(InferiorProcess, server.cookie)
+
+        # Send the notification to the server
+        message = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": payload,
+        }
+        await write_lsp_message(proc.stdin, message)
+        log_message(f"[{proc.name}] -->", message, method)
+
+    # Instantiate logic with callbacks
+    logic = logic_class([p.server for p in procs], notify_client, request_server, notify_server, opts)
 
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
@@ -308,10 +377,6 @@ async def run_multiplexer(
                     await logic.on_client_notification(
                         method, msg.get("params", {})
                     )
-
-                    for p in procs:
-                        await write_lsp_message(p.stdin, msg)
-                        log_message(f"[{p.name}] -->", msg, method)
                 elif method is not None:
                     # Request
                     log_message("-->", msg, method)
@@ -451,7 +516,25 @@ async def run_multiplexer(
 
                 if method is None:
                     req_id = cast(ReqId, req_id)
-                    # Server response - lookup method and params from request tracking
+                    # Check if this is a response to a rass-originated request
+                    if (rass_info := rass_request_mapping.get(req_id)):
+                        _, rass_method, _, future = rass_info
+                        del rass_request_mapping[req_id]
+
+                        is_error = "error" in msg
+                        payload = (
+                            msg.get("error", {})
+                            if is_error
+                            else msg.get("result", {})
+                        )
+                        log_message(f"[{proc.name}] <-r", msg, rass_method)
+
+                        # Resolve the future
+                        if not future.done():
+                            future.set_result((is_error, cast(JSON, payload)))
+                        continue
+
+                    # Client-originated-request, do forwarding/aggregation
                     request_info = inflight_requests.get(req_id)
                     if not request_info:
                         log(f"Dropping response to unknown {req_id}")

@@ -65,12 +65,16 @@ class LspLogic:
     def __init__(
         self,
         servers: list[Server],
-        send_notification: Callable[[str, JSON], Awaitable[None]],
+        notify_client: Callable[[str, JSON], Awaitable[None]],
+        request_server: Callable[[Server, str, JSON], Awaitable[tuple[bool, JSON]]],
+        notify_server: Callable[[Server, str, JSON], Awaitable[None]],
         opts,
     ):
-        """Initialize with all servers, a notification sender, and options."""
+        """Initialize with all servers, notification and request senders, and options."""
         self.primary = servers[0]
-        self.send_notification = send_notification
+        self.notify_client = notify_client
+        self.request_server = request_server
+        self.notify_server = notify_server
         self.opts = opts
         # Track document state: URI -> DocumentState
         self.document_state: dict[str, DocumentState] = {}
@@ -172,7 +176,7 @@ class LspLogic:
 
     async def on_client_notification(self, method: str, params: JSON) -> None:
         """
-        Handle client notifications to track document state.
+        Handle client notifications to track document state and forward to servers.
         """
 
         def reset_state(uri: str, version: Optional[int]):
@@ -201,6 +205,10 @@ class LspLogic:
                     else doc.get('version')
                 )
                 reset_state(uri, v)
+
+        # Forward notification to all servers
+        for server in self.servers.values():
+            await self.notify_server(server, method, params)
 
     async def on_client_response(
         self,
@@ -277,7 +285,7 @@ class LspLogic:
             return
 
         # Forward other notifications immediately
-        await self.send_notification(method, params)
+        await self.notify_client(method, params)
 
     async def on_server_response(
         self,
@@ -493,7 +501,7 @@ class LspLogic:
         if state.push_diags_timer:
             state.push_diags_timer.cancel()
 
-        await self.send_notification(
+        await self.notify_client(
             'textDocument/publishDiagnostics',
             {
                 'uri': uri,
