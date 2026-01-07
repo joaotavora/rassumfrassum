@@ -329,7 +329,7 @@ class LspLogic:
         """
         if method == 'textDocument/publishDiagnostics':
             return 1000
-        return 2500
+        return 3000
 
     def aggregate_response_payloads(
         self,
