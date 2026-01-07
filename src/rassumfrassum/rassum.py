@@ -25,6 +25,9 @@ from .json import (
 from .util import event, log, warn, debug
 from .stdio import create_stdin_reader, create_stdout_writer
 
+# JSONRPC request IDs can be strings or integers
+ReqId = str | int
+
 
 class InferiorProcess:
     """A server subprocess and its associated logical server info."""
@@ -41,15 +44,15 @@ class InferiorProcess:
 
     @property
     def stdin(self) -> asyncio.StreamWriter:
-        return self.process.stdin  # pyright: ignore[reportReturnType]
+        return self.process.stdin  # ty:ignore[invalid-return-type]
 
     @property
     def stdout(self) -> asyncio.StreamReader:
-        return self.process.stdout  # pyright: ignore[reportReturnType]
+        return self.process.stdout  # ty:ignore[invalid-return-type]
 
     @property
     def stderr(self) -> asyncio.StreamReader:
-        return self.process.stderr  # pyright: ignore[reportReturnType]
+        return self.process.stderr  # ty:ignore[invalid-return-type]
 
     @property
     def name(self) -> str:
@@ -62,7 +65,7 @@ class AggregationState:
     """State for tracking an ongoing message aggregation."""
 
     outstanding: set[InferiorProcess]
-    id: Optional[int]
+    id: Optional[ReqId]
     method: str
     aggregate: dict[int, PayloadItem]
     dispatched: bool | str = False
@@ -150,14 +153,14 @@ async def run_multiplexer(
     log(f"Logic class: {logic_class}")
 
     # Track ongoing aggregations: key -> AggregationState
-    response_aggregations: dict[int, AggregationState] = {}
+    response_aggregations: dict[ReqId, AggregationState] = {}
 
-    # Track which request IDs need aggregation: id -> (method, params)
-    inflight_requests = {}
+    # Track which request IDs need aggregation: id -> (method, params, responders)
+    inflight_requests: dict[ReqId, tuple[str, JSON, set[InferiorProcess]]] = {}
 
     # Track server requests to remap IDs
     # remapped_id -> (original_server_id, server, method, params)
-    server_request_mapping = {}
+    server_request_mapping: dict[ReqId, tuple[ReqId, InferiorProcess, str, JSON]] = {}
     next_remapped_id = 0
 
     # Track shutdown state
@@ -344,13 +347,14 @@ async def run_multiplexer(
                         await write_lsp_message(p.stdin, msg)
                         log_message(f"[{p.name}] -->", msg, method)
 
-                    inflight_requests[id] = (
+                    inflight_requests[cast(ReqId,id)] = (
                         method,
                         cast(JSON, params),
                         set(target_procs),
                     )
                 else:
                     # Response from client (to a server request)
+                    id = cast(ReqId, id)
                     if info := server_request_mapping.get(id):
                         # This is a response to a server request - remap ID and route to correct server
                         original_id, target_proc, req_method, req_params = info
@@ -446,7 +450,7 @@ async def run_multiplexer(
                     continue
 
                 if method is None:
-                    req_id = cast(int, req_id)
+                    req_id = cast(ReqId, req_id)
                     # Server response - lookup method and params from request tracking
                     request_info = inflight_requests.get(req_id)
                     if not request_info:
@@ -462,7 +466,7 @@ async def run_multiplexer(
                     log_message(f"[{proc.name}] <--", msg, method)
                     await logic.on_server_response(
                         method,
-                        cast(JSON, req_params),
+                        req_params,
                         cast(JSON, payload),
                         is_error,
                         proc.server,
