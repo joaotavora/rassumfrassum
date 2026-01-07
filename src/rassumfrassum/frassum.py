@@ -247,11 +247,8 @@ class LspLogic:
             and (uri := params.get('uri'))
             and (state := self.document_state.get(uri))
         ):
-            # Add source attribution
             diagnostics = params.get('diagnostics', [])
-            for diag in diagnostics:
-                if 'source' not in diag:
-                    diag['source'] = source.name
+            _add_source_attribution(diagnostics, source)
 
             # Check version - drop stale diagnostics
             if (version := params.get('version')) and version != state.docver:
@@ -361,10 +358,7 @@ class LspLogic:
             for item in items:
                 p = cast(JSON, item.payload)
                 diagnostics = p.get('items', [])
-                # Add source attribution
-                for diag in diagnostics:
-                    if 'source' not in diag:
-                        diag['source'] = item.server.name
+                _add_source_attribution(diagnostics, item.server)
                 all_items.extend(diagnostics)
             # FIXME: JT@2026-01-05: we elide any 'resultId', which
             # means we're missing out on that optimization
@@ -513,3 +507,10 @@ class LspLogic:
                 ),
             },
         )
+
+def _add_source_attribution(diags, server):
+    for d in diags:
+        if 'source' not in d:
+            d['source'] = server.name
+
+
