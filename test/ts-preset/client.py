@@ -92,17 +92,20 @@ async def main():
     )).get('diagnostics', [])
     log(client.name, f"Got {len(push_diags)} pushed diagnostics")
 
-    # Test TypeScript diagnostics
-    ts_diags = [d for d in push_diags if d.get('source') == 'typescript']
-    log(client.name, f"Got {len(ts_diags)} TypeScript diagnostic(s)")
-    assert len(ts_diags) > 0, ( "Expected at least one TypeScript diagnostic")
+    # JT@2026-01-07: Use to check here that at least 1 diagnostic was
+    # sent, but now we don't because typescript-language-server seems
+    # to have an internal race condition where sometimes it pushed 2
+    # diagnostics, and sometimes 0.  It's enough for the purpose of
+    # this test to simply wait for it to send a (potentially empty)
+    # publishDiagnostics.
 
     # Pull some more diagnostics (pull response)
     diag_response = await client.read_response(req_id)
     result = diag_response.get('result', {})
     pull_diagnostics = result.get('items', [])
 
-    # Test ESLint diagnostics
+    # Test ESLint diagnostics (and here we do assert that something
+    # actually came in)
     eslint_diags = [d for d in pull_diagnostics if d.get('source') == 'eslint']
     log(client.name, f"Got {len(eslint_diags)} ESLint diagnostic(s)")
     assert len(eslint_diags) > 0, "Expected at least one ESLint diagnostic"
