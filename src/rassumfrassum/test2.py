@@ -3,6 +3,7 @@ Async test helpers for LSP testing.
 """
 
 import asyncio
+import inspect
 import sys
 from typing import Callable, cast
 
@@ -211,6 +212,118 @@ class LspTestEndpoint:
             pass
 
 
+async def _run_toy_server_async(
+    name: str,
+    version: str,
+    capabilities: JSON,
+    request_handlers: 'dict[str, Callable[[int, JSON | None], JSON | None]]',
+    notification_handlers: 'dict[str, Callable[[JSON | None], None]]'
+) -> None:
+    """Internal async implementation of toy LSP server."""
+    loop = asyncio.get_event_loop()
+
+    # Setup async stdin
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+
+    # Setup async stdout
+    w_transport, w_protocol = await loop.connect_write_pipe(
+        asyncio.streams.FlowControlMixin, sys.stdout
+    )
+    writer = asyncio.StreamWriter(w_transport, w_protocol, reader, loop)
+
+    log(name, "Started!")
+
+    tasks = []
+    should_stop = False
+
+    async def handle_async_request(msg_id: int, method: str, params: JSON | None, handler):
+        """Handle a single async request."""
+        try:
+            result = await handler(msg_id, params)
+            response = {
+                'jsonrpc': '2.0',
+                'id': msg_id,
+                'result': result
+            }
+            await write_message(writer, response)
+        except Exception as e:
+            log(name, f"Error in async handler for {method}: {e}")
+
+    while not should_stop:
+        try:
+            message = await read_message(reader)
+            if message is None:
+                break
+
+            method = message.get('method')
+            msg_id = message.get('id')
+            params = message.get('params')
+
+            # Handle requests (messages with id)
+            if msg_id is not None and method:
+                if method in request_handlers:
+                    handler = request_handlers[method]
+
+                    # Check if handler is async
+                    if inspect.iscoroutinefunction(handler):
+                        # Spawn async handler as a task
+                        task = asyncio.create_task(handle_async_request(msg_id, method, params, handler))
+                        tasks.append(task)
+                    else:
+                        # Call sync handler directly
+                        result = handler(msg_id, params)
+                        response = {
+                            'jsonrpc': '2.0',
+                            'id': msg_id,
+                            'result': result
+                        }
+                        await write_message(writer, response)
+
+                    # Special handling for shutdown
+                    if method == 'shutdown':
+                        log(name, "shutting down")
+                        should_stop = True
+                else:
+                    log(name, f"Unhandled request {method} (id={msg_id})")
+
+            # Handle notifications (messages without id)
+            elif method and msg_id is None:
+                if method in notification_handlers:
+                    notification_handlers[method](params)
+                else:
+                    log(name, f"got notification {method}")
+
+            # Handle responses from client (e.g., workspace/configuration response)
+            elif msg_id == 999 and method is None:
+                log(name, f"Got response to workspace/configuration request: {message}")
+                # Validate response and send notification if correct
+                result = message.get('result')
+                if (isinstance(result, list) and len(result) == 1 and
+                    isinstance(result[0], dict) and result[0].get('pythonPath') == '/usr/bin/python3'):
+                    # Response is correct, send success notification
+                    await write_message(writer, {
+                        'jsonrpc': '2.0',
+                        'method': 'custom/requestResponseOk',
+                        'params': {'server': name}
+                    })
+                    log(name, "Response validation passed, sent success notification")
+                else:
+                    log(name, f"Response validation FAILED: {result}")
+
+        except Exception as e:
+            log(name, f"Error: {e}")
+            break
+
+    # Wait for all pending async tasks
+    if tasks:
+        log(name, f"Waiting for {len(tasks)} pending tasks")
+        await asyncio.gather(*tasks)
+
+    log(name, "stopped")
+
+
 def run_toy_server(
     name: str,
     version: str = '1.0.0',
@@ -225,10 +338,10 @@ def run_toy_server(
         name: Server name for serverInfo
         version: Server version
         capabilities: Server capabilities (defaults to empty dict)
-        request_handlers: Dict mapping method names to (msg_id, params) -> result handlers
+        request_handlers: Dict mapping method names to (msg_id, params) -> result handlers.
+                         Handlers can be sync or async functions. Async handlers are spawned as tasks.
         notification_handlers: Dict mapping method names to (params) -> None handlers
     """
-
     # Default minimal capabilities
     if capabilities is None:
         capabilities = {}
@@ -257,62 +370,5 @@ def run_toy_server(
     if notification_handlers is None:
         notification_handlers = {}
 
-    log(name, "Started!")
-
-    while True:
-        try:
-            message = read_message_sync()
-            if message is None:
-                break
-
-            method = message.get('method')
-            msg_id = message.get('id')
-            params = message.get('params')
-
-            # Handle requests (messages with id)
-            if msg_id is not None and method:
-                if method in request_handlers:
-                    result = request_handlers[method](msg_id, params)
-                    response = {
-                        'jsonrpc': '2.0',
-                        'id': msg_id,
-                        'result': result
-                    }
-                    write_message_sync(response)
-
-                    # Special handling for shutdown
-                    if method == 'shutdown':
-                        log(name, "shutting down")
-                        break
-                else:
-                    log(name, f"Unhandled request {method} (id={msg_id})")
-
-            # Handle notifications (messages without id)
-            elif method and msg_id is None:
-                if method in notification_handlers:
-                    notification_handlers[method](params)
-                else:
-                    log(name, f"got notification {method}")
-
-            # Handle responses from client (e.g., workspace/configuration response)
-            elif msg_id == 999 and method is None:
-                log(name, f"Got response to workspace/configuration request: {message}")
-                # Validate response and send notification if correct
-                result = message.get('result')
-                if (isinstance(result, list) and len(result) == 1 and
-                    isinstance(result[0], dict) and result[0].get('pythonPath') == '/usr/bin/python3'):
-                    # Response is correct, send success notification
-                    write_message_sync({
-                        'jsonrpc': '2.0',
-                        'method': 'custom/requestResponseOk',
-                        'params': {'server': name}
-                    })
-                    log(name, "Response validation passed, sent success notification")
-                else:
-                    log(name, f"Response validation FAILED: {result}")
-
-        except Exception as e:
-            log(name, f"Error: {e}")
-            break
-
-    log(name, "stopped")
+    # Run the async implementation
+    asyncio.run(_run_toy_server_async(name, version, capabilities, request_handlers, notification_handlers))
