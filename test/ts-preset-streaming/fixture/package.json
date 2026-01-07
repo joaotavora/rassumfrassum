@@ -1,0 +1,19 @@
+{
+	"name": "module-starter",
+	"version": "0.0.1",
+	"description": "module template",
+	"main": "lib/src/index.js",
+	"scripts": {
+		"lint": "eslint src"
+	},
+	"type": "module",
+	"author": "",
+	"license": "ISC",
+	"devDependencies": {
+		"@typescript-eslint/eslint-plugin": "^5.58.0",
+		"@typescript-eslint/parser": "^5.58.0",
+		"eslint": "^8.38.0",
+		"typescript": "^5.0.4"
+	},
+	"types": "./@types/index.d.ts"
+}

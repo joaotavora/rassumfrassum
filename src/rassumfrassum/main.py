@@ -93,6 +93,12 @@ def main() -> None:
         help='Drop tardy messages instead of re-sending aggregations.',
     )
     parser.add_argument(
+        '--stream-diagnostics',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='Stream diagnostics as they arrive (default: enabled).',
+    )
+    parser.add_argument(
         '--logic-class',
         type=str,
         default='LspLogic',

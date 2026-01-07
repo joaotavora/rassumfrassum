@@ -12,8 +12,8 @@ from .util import (
     dmerge,
     is_scalar,
     debug,
+    info,
 )
-
 
 @dataclass
 class Server:
@@ -23,23 +23,22 @@ class Server:
     caps: JSON = field(default_factory=dict)
     cookie: object = None
 
-
 @dataclass
 class DocumentState:
     """State for tracking diagnostics for a document."""
 
     docver: int
-    inflight_pushes: dict[int, list] = field(
-        default_factory=dict
-    )  # server_id -> diagnostics
-    inflight_pulls: dict[int, None] = field(
-        default_factory=dict
-    )  # server_id -> previousResultId
-    push_diags_timer: Optional[asyncio.Task] = None
-    push_dispatched: bool = False
     stashed_items: set[int] = field(
         default_factory=set
     )  # lean_ids of stashed completion/codeAction items
+    inflight_pushes: dict[int, list] = field(
+        default_factory=dict
+    )  # server_id -> diagnostics
+    push_diags_timer: Optional[asyncio.Task] = None
+    push_dispatched: bool = False
+    inflight_pulls: dict[int, str | int] = field(
+        default_factory=dict
+    )  # server_id -> previousResultId
 
 
 @dataclass
@@ -112,13 +111,28 @@ class LspLogic:
                 # Unhappy case: no original data, respond immediately with stashed payload
                 return DirectResponse(payload=payload)
 
-        # initialize and shutdown go to all servers
-        if method in ['initialize', 'shutdown']:
+        # initialize goes to all servers
+        if method == 'initialize':
+            doccaps = params['capabilities']['textDocument']
+            # Check for client $streamingDiagnostics capability
+            if doccaps.pop('$streamingDiagnostics', None):
+                self.opts.stream_diagnostics = True
+
+                info("Client requested streaming diagnostics mode")
+
             # Force UTF-16 encoding to avoid position mismatches (#8)
-            if method == 'initialize' and (
-                g := params['capabilities'].get('general')
-            ):
+            if g := params['capabilities'].get('general'):
                 g['positionEncodings'] = ['utf-16']
+
+            # In streaming mode, add diagnostic capability to client
+            if self.opts.stream_diagnostics:
+                # TODO: also force versionSupport in the
+                # publishDiagnostics cap.
+                doccaps['diagnostic'] = {'dynamicRegistration': False}
+            return servers
+
+        # shutdown goes to all servers
+        if method == 'shutdown':
             return servers
 
         # Route requests to _all_ servers supporting this
@@ -162,7 +176,7 @@ class LspLogic:
             ):
                 # Register inflight pulls for all target servers
                 for target in targets:
-                    state.inflight_pulls[id(target)] = None
+                    state.inflight_pulls[id(target)] = -1
 
                 # Check if this helps completes an ongoing push
                 # aggregation JT@2026-01-08: hmmm, this should work,
@@ -181,6 +195,10 @@ class LspLogic:
         Handle client notifications to track document state and forward to servers.
         """
 
+        async def forward_all():
+            for server in self.servers.values():
+                await self.notify_server(server, method, params)
+
         def reset_state(uri: str, version: Optional[int]):
             """Reset document state. If version is None, close the document."""
             if state := self.document_state.get(uri):
@@ -189,28 +207,36 @@ class LspLogic:
                 # Clean up stashed items for this document
                 for lean_id in state.stashed_items:
                     self.stash.pop(lean_id, None)
-            if version is None:
-                self.document_state.pop(uri, None)
-            else:
-                self.document_state[uri] = DocumentState(docver=version)
+                if version is not None:
+                    # Preserve inflight_pulls in streaming mode
+                    old_pulls = state.inflight_pulls if self.opts.stream_diagnostics else {}
+                    # Replace with fresh state
+                    state = DocumentState(docver=version)
+                    state.inflight_pulls.update(old_pulls)
+                    self.document_state[uri] = state
+                    return state
+                else:
+                    self.document_state.pop(uri, None)
+                    return None
+            elif version is not None:
+                state = DocumentState(docver=version)
+                self.document_state[uri] = state
+                return state
 
-        if method in (
-            'textDocument/didOpen',
-            'textDocument/didChange',
-            'textDocument/didClose',
-        ):
-            doc = params.get('textDocument', {})
-            if (uri := doc.get('uri')) is not None:
-                v = (
-                    None
-                    if method == 'textDocument/didClose'
-                    else doc.get('version')
-                )
-                reset_state(uri, v)
-
-        # Forward notification to all servers
-        for server in self.servers.values():
-            await self.notify_server(server, method, params)
+        if method == 'textDocument/didClose':
+            reset_state(params["textDocument"]["uri"], None)
+            await forward_all()
+        elif method in ('textDocument/didOpen', 'textDocument/didChange'):
+            uri = params["textDocument"]["uri"]
+            v = params["textDocument"]["version"]
+            state = reset_state(uri, v)
+            await forward_all()
+            # In streaming mode, pull diagnostics from pull-capable servers
+            if self.opts.stream_diagnostics:
+                await self._pull_and_stream_diags(uri, state,
+                                                  method == 'textDocument/didChange')
+        else:
+            await forward_all()
 
     async def on_client_response(
         self,
@@ -243,7 +269,7 @@ class LspLogic:
         """
         Handle server notifications and forward to client.
         """
-        # Special handling for diagnostics aggregation
+        # Special handling for diagnostics
         if (
             method == 'textDocument/publishDiagnostics'
             and (uri := params.get('uri'))
@@ -256,6 +282,16 @@ class LspLogic:
             if (version := params.get('version')) and version != state.docver:
                 return
 
+            # In streaming mode, send diagnostics immediately without aggregation
+            if self.opts.stream_diagnostics:
+                # Add version if not present
+                params['token'] = f"{source.name}-{id(source)}"
+                if 'version' not in params:
+                    params['version'] = state.docver
+                await self.notify_client('$/streamDiagnostics', params)
+                return
+
+            # Non-streaming mode: aggregation logic
             # Update aggregate with this server's diagnostics
             state.inflight_pushes[id(source)] = diagnostics
 
@@ -282,6 +318,13 @@ class LspLogic:
                 state.push_diags_timer = asyncio.create_task(send_on_timeout())
 
             return
+        elif (
+            method == 'textDocument/publishDiagnostics'
+            and self.opts.stream_diagnostics
+        ):
+            # no 'state' but still want to convert
+            params['token'] = f"{source.name}-{id(source)}"
+            method = '$/streamDiagnostics'
 
         # Forward other notifications immediately
         await self.notify_client(method, params)
@@ -321,7 +364,8 @@ class LspLogic:
             and (doc_state := self.document_state.get(uri))
         ):
             # JT@2026-01-08: TODO: also stash diagnostic 'data'
-            doc_state.inflight_pulls[id(server)] = payload.get("resultId")
+            doc_state.inflight_pulls[id(server)] = cast(str|int,
+                                                        payload.get("resultId"))
         elif (
             method == 'textDocument/completion'
             and (uri := request_params.get('textDocument', {}).get('uri'))
@@ -341,6 +385,11 @@ class LspLogic:
                 server.name = payload['serverInfo']['name']
             caps = payload.get('capabilities')
             server.caps = caps.copy() if caps else {}
+
+            # In streaming mode, remove diagnosticProvider from the merged caps
+            # (but keep it in server.caps for our internal use)
+            if self.opts.stream_diagnostics and caps:
+                caps.pop('diagnosticProvider', None)
 
     def get_aggregation_timeout_ms(self, method: str | None) -> int:
         """
@@ -382,7 +431,9 @@ class LspLogic:
                 _add_source_attribution(diagnostics, item.server)
                 all_items.extend(diagnostics)
             # FIXME: JT@2026-01-05: we elide any 'resultId', which
-            # means we're missing out on that optimization
+            # means we're missing out on that optimization.  Not too
+            # serious if we can convince the client to support
+            # streaming, which should support 'resultId'.
             res = {'items': all_items, 'kind': "full"}
 
         elif method == 'textDocument/codeAction':
@@ -413,6 +464,9 @@ class LspLogic:
                 ),
                 {},
             )
+            # In streaming mode, advertise our custom streaming capability
+            if self.opts.stream_diagnostics and not is_error:
+                res['capabilities']['$streamingDiagnosticsProvider'] = True
 
         elif method == 'shutdown':
             res = {}
@@ -505,14 +559,14 @@ class LspLogic:
         # Don't send empty aggregations - need at least one push diagnostic
         if not state.inflight_pushes:
             return False
-        # Aggrpush_dispatched complete when union of push diagnostics and inflight pulls covers all servers
+        # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
         return (
             state.inflight_pushes.keys() | state.inflight_pulls.keys()
         ) == self.servers.keys()
 
     async def _publish_pushdiags(self, uri: str, state: DocumentState) -> None:
         """Send aggregated diagnostics to the client."""
-        state.dispatched = True
+        state.push_dispatched = True
         if state.push_diags_timer:
             state.push_diags_timer.cancel()
 
@@ -529,9 +583,54 @@ class LspLogic:
             },
         )
 
+    async def _pull_and_stream_diags(self, orig_uri, state, include_neighbours):
+        """Pull from diagnosticProvider servers and push to client.
+        uri is the URI that motivated this.
+        """
+
+        async def doit(
+            server: Server, uri: str, state : DocumentState
+        ):
+            is_error, pull_response = await self.request_server(
+                server,
+                'textDocument/diagnostic',
+                {
+                    'textDocument': {'uri': uri},
+                    'previousResultId': state.inflight_pulls.get(id(server))
+            })
+
+            if is_error:
+                if pull_response.get('data',[]).get('retriggerRequest'):
+                    await doit(server, uri, state)
+            elif pull_response:
+                resultId = pull_response.get("resultId")
+                state.inflight_pulls[id(server)] = cast(str|int, resultId)
+                diagnostics = pull_response.get('items', [])
+                _add_source_attribution(diagnostics, server)
+                # Send as streamDiagnostics notification
+                params = {
+                    'uri': uri,
+                    'version': state.docver,
+                    'token': f"{server.name}-{id(server)}",
+                    'kind': pull_response.get('kind')
+                }
+                if diagnostics:
+                    params['diagnostics'] = diagnostics
+                await self.notify_client('$/streamDiagnostics', params)
+
+        for server in self.servers.values():
+            if not server.caps.get('diagnosticProvider'):
+                continue
+            # Use as background task to avoid blocking other
+            # servers.
+            asyncio.create_task(doit(server, orig_uri, state))
+            if include_neighbours:
+                for uri, state in self.document_state.items():
+                    if uri != orig_uri:
+                        asyncio.create_task(doit(server, uri, state))
+
 def _add_source_attribution(diags, server):
     for d in diags:
         if 'source' not in d:
             d['source'] = server.name
-
 

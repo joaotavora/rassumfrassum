@@ -244,6 +244,70 @@ or a fully qualified class name like `mymodule.MyCustomLogic`.  This
 is useful for extending rass with custom routing behavior by
 subclassing `LspLogic`.
 
+The `--stream-diagnostics` and `--no-stream-diagnostics` options
+control whether diagnostics are streamed incrementally or aggregated
+before sending. When streaming is enabled (the default), clients
+receive `$/streamDiagnostics` notifications as each server responds.
+When disabled, diagnostics are aggregated and sent as standard
+`textDocument/publishDiagnostics` notifications. See the [Streaming
+Diagnostics Protocol Extension](#streaming-diagnostics-protocol-extension)
+section for details.
+
+<a name=streaming-diagnostics-protocol-extension></a>
+### Streaming diagnostics
+
+Rassumfrassum implements an optional experimental non-standard
+protocol extension for streaming diagnostics from multiple
+sources. Rather than having clients and users wait for aggregations,
+this allows receiving diagnostics incrementally as different sources
+of diagnostics potentially respond out-of-phase.  Although the
+protocol is designed to serve Rass's use case (where sources ==
+multiplexed servers) it could theoretically be reused by any server
+that wants to provide different types of diagnostics (warnings, errors,
+linter results) separately.
+
+#### Protocol flow
+
+Negotiation happens when the client advertises support by sending
+`$streamingDiagnostics` capability in the `initialize`
+request. Rassumfrassum responds with `$streamingDiagnosticsProvider`
+set to `true` in its capabilities.
+
+Now, consider a simple example with two servers and one file. When the
+client sends `textDocument/didOpen` for `file.py` at version 0,
+rassumfrassum forwards the notification to both servers.
+
+Let's assume the first server quickly sends a
+`textDocument/publishDiagnostics` notification which rassumfrassum
+converts to `$/streamDiagnostics` and forwards to the client. This
+notification includes the `uri` of the file, the `diagnostics` array,
+the document `version` (0), and a bonus `token` identifying the source
+server. The client stores these diagnostics indexed by the triplet
+`(version, uri, token)`.  Let's also assume the second server doesn't
+support `textDocument/publishDiagnostics` but rather
+`textDocument/diagnostic` "pull" requests.  Rassumfrassum sends an
+internal pull to it and the response is also converted to a
+`$/streamDiagnostics` notification, with a different token but the
+same `uri` and `version`.  The client stores this second batch
+separately and updates its display by combining diagnostics from both
+tokens.
+
+Now the user edits the file. The client sends `textDocument/didChange`
+with version 1. Both servers analyze the new content and the process
+repeats. When each `$/streamDiagnostics` notification arrives, the
+client replaces the old diagnostics for that specific `(version, uri,
+token)` triplet. The diagnostics from the first server's version 0 are
+replaced by its version 1 diagnostics. Same for the second server.
+
+The `kind` field may be present with value `"unchanged"` to indicate
+the diagnostics for this token haven't changed. In this case the
+client reuses any previous diagnostics for that uri and token. 
+
+A complete reference implementation can be found in
+[eglot.el](https://git.savannah.gnu.org/cgit/emacs.git/tree/lisp/progmodes/eglot.el)
+in the `eglot-handle-notification` method for
+`$/streamDiagnostics`.
+
 [eglot]: https://github.com/joaotavora/eglot
 [lsp]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/
 [build-status]: https://github.com/joaotavora/rassumfrassum/actions/workflows/test.yml
