@@ -34,9 +34,9 @@ class DocumentState:
     )  # server_id -> diagnostics
     inflight_pulls: dict[int, None] = field(
         default_factory=dict
-    )  # server_id -> None (acts as a set for now)
+    )  # server_id -> previousResultId
     push_diags_timer: Optional[asyncio.Task] = None
-    dispatched: bool = False
+    push_dispatched: bool = False
     stashed_items: set[int] = field(
         default_factory=set
     )  # lean_ids of stashed completion/codeAction items
@@ -164,7 +164,9 @@ class LspLogic:
                 for target in targets:
                     state.inflight_pulls[id(target)] = None
 
-                # Check if this helps completes an ongoing push aggregation
+                # Check if this helps completes an ongoing push
+                # aggregation JT@2026-01-08: hmmm, this should work,
+                # but could also do it in on_server_response...
                 if self._pushdiags_complete(state):
                     await self._publish_pushdiags(uri, state)
 
@@ -258,7 +260,7 @@ class LspLogic:
             state.inflight_pushes[id(source)] = diagnostics
 
             # If already dispatched, decide whether to re-send or drop
-            if state.dispatched:
+            if state.push_dispatched:
                 if self.opts.drop_tardy:
                     debug("Dropping tardy diagnostics")
                     return
@@ -301,14 +303,26 @@ class LspLogic:
         # Stash data fields in codeAction responses
         if (
             method == 'textDocument/codeAction'
-            and (uri := request_params.get('textDocument', {}).get('uri'))
+            and (uri := request_params['textDocument']['uri'])
             and (doc_state := self.document_state.get(uri))
         ):
             for action in cast(list, payload):
                 self._stash_data(action, server, doc_state)
-
-        # Stash data fields in completion responses
-        if (
+        elif (
+            method == 'textDocument/codeAction'
+            and (uri := request_params['textDocument']['uri'])
+            and (doc_state := self.document_state.get(uri))
+        ):
+            for action in cast(list, payload):
+                self._stash_data(action, server, doc_state)
+        elif (
+            method == 'textDocument/diagnostics'
+            and (uri := request_params['textDocument']['uri'])
+            and (doc_state := self.document_state.get(uri))
+        ):
+            # JT@2026-01-08: TODO: also stash diagnostic 'data'
+            doc_state.inflight_pulls[id(server)] = payload.get("resultId")
+        elif (
             method == 'textDocument/completion'
             and (uri := request_params.get('textDocument', {}).get('uri'))
             and (doc_state := self.document_state.get(uri))
@@ -484,7 +498,7 @@ class LspLogic:
         # Don't send empty aggregations - need at least one push diagnostic
         if not state.inflight_pushes:
             return False
-        # Aggregation is complete when union of push diagnostics and inflight pulls covers all servers
+        # Aggrpush_dispatched complete when union of push diagnostics and inflight pulls covers all servers
         return (
             state.inflight_pushes.keys() | state.inflight_pulls.keys()
         ) == self.servers.keys()
