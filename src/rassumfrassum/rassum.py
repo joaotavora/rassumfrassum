@@ -160,12 +160,16 @@ async def run_multiplexer(
 
     # Track server requests to remap IDs
     # remapped_id -> (original_server_id, server, method, params)
-    server_request_mapping: dict[ReqId, tuple[ReqId, InferiorProcess, str, JSON]] = {}
+    server_request_mapping: dict[
+        ReqId, tuple[ReqId, InferiorProcess, str, JSON]
+    ] = {}
     next_remapped_id = 0
 
     # Track rass-originated requests to servers
     # rass_request_id -> (server, method, params, future)
-    rass_request_mapping: dict[ReqId, tuple[InferiorProcess, str, JSON, asyncio.Future]] = {}
+    rass_request_mapping: dict[
+        ReqId, tuple[InferiorProcess, str, JSON, asyncio.Future]
+    ] = {}
     next_rass_request_id = 0
 
     # Track shutdown state
@@ -210,7 +214,9 @@ async def run_multiplexer(
         }
         await _send_to_client(message, method)
 
-    async def request_server(server: Server, method: str, payload: JSON) -> tuple[bool, JSON]:
+    async def request_server(
+        server: Server, method: str, payload: JSON
+    ) -> tuple[bool, JSON]:
         """
         Send a request to a server and wait for response (for use by logic layer).
 
@@ -275,7 +281,13 @@ async def run_multiplexer(
         log_message(f"[{proc.name}] -->", message, method)
 
     # Instantiate logic with callbacks
-    logic = logic_class([p.server for p in procs], notify_client, request_server, notify_server, opts)
+    logic = logic_class(
+        [p.server for p in procs],
+        notify_client,
+        request_server,
+        notify_server,
+        opts,
+    )
 
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
@@ -395,7 +407,9 @@ async def run_multiplexer(
                         response_msg = {
                             "jsonrpc": "2.0",
                             "id": id,
-                            "error" if result.is_error else "result": result.payload,
+                            "error"
+                            if result.is_error
+                            else "result": result.payload,
                         }
                         await _send_to_client(response_msg, method)
                         continue
@@ -412,7 +426,7 @@ async def run_multiplexer(
                         await write_lsp_message(p.stdin, msg)
                         log_message(f"[{p.name}] -->", msg, method)
 
-                    inflight_requests[cast(ReqId,id)] = (
+                    inflight_requests[cast(ReqId, id)] = (
                         method,
                         cast(JSON, params),
                         set(target_procs),
@@ -493,9 +507,7 @@ async def run_multiplexer(
                             else "result": direct_response.payload,
                         }
                         await write_lsp_message(proc.stdin, response_msg)
-                        log_message(
-                            f"[{proc.name}] s->", response_msg, method
-                        )
+                        log_message(f"[{proc.name}] s->", response_msg, method)
                         continue
 
                     # This is a request from server to client - remap ID
@@ -517,7 +529,7 @@ async def run_multiplexer(
                 if method is None:
                     req_id = cast(ReqId, req_id)
                     # Check if this is a response to a rass-originated request
-                    if (rass_info := rass_request_mapping.get(req_id)):
+                    if rass_info := rass_request_mapping.get(req_id):
                         _, rass_method, _, future = rass_info
                         del rass_request_mapping[req_id]
 

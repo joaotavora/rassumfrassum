@@ -15,6 +15,7 @@ from .util import (
     info,
 )
 
+
 @dataclass
 class Server:
     """Information about a logical LSP server."""
@@ -22,6 +23,7 @@ class Server:
     name: str
     caps: JSON = field(default_factory=dict)
     cookie: object = None
+
 
 @dataclass
 class DocumentState:
@@ -65,7 +67,9 @@ class LspLogic:
         self,
         servers: list[Server],
         notify_client: Callable[[str, JSON], Awaitable[None]],
-        request_server: Callable[[Server, str, JSON], Awaitable[tuple[bool, JSON]]],
+        request_server: Callable[
+            [Server, str, JSON], Awaitable[tuple[bool, JSON]]
+        ],
         notify_server: Callable[[Server, str, JSON], Awaitable[None]],
         opts,
     ):
@@ -98,9 +102,8 @@ class LspLogic:
             DirectResponse to send immediately without forwarding
         """
         # Check for data recovery from stash
-        if (
-            method.endswith("resolve")
-            and (stashed := self.stash.get(cast(int, params.get('data'))))
+        if method.endswith("resolve") and (
+            stashed := self.stash.get(cast(int, params.get('data')))
         ):
             payload, original_data, server = stashed
             if original_data is not None:
@@ -112,7 +115,7 @@ class LspLogic:
                 return DirectResponse(payload=payload)
 
         # initialize goes to all servers
-        if method == 'initialize':
+        elif method == 'initialize':
             doccaps = params['capabilities']['textDocument']
             # Check for client $streamingDiagnostics capability
             if doccaps.pop('$streamingDiagnostics', None):
@@ -132,15 +135,15 @@ class LspLogic:
             return servers
 
         # shutdown goes to all servers
-        if method == 'shutdown':
+        elif method == 'shutdown':
             return servers
 
         # Route requests to _all_ servers supporting this
-        if method == 'textDocument/codeAction':
+        elif method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
 
         # Completions is special
-        if method == 'textDocument/completion':
+        elif method == 'textDocument/completion':
             cands = [s for s in servers if s.caps.get('completionProvider')]
             if len(cands) <= 1:
                 return cands
@@ -155,7 +158,7 @@ class LspLogic:
                 return cands
 
         # Route these to at most one server supporting this capability
-        if cap := {
+        elif cap := {
             'textDocument/rename': 'renameProvider',
             'textDocument/formatting': 'documentFormattingProvider',
             'textDocument/rangeFormatting': 'documentRangeFormattingProvider',
@@ -166,7 +169,7 @@ class LspLogic:
             return []
 
         # Handle pull diagnostics requests
-        if method == 'textDocument/diagnostic':
+        elif method == 'textDocument/diagnostic':
             # fmt: off
             if (
                 (text_doc := params.get('textDocument'))
@@ -209,7 +212,11 @@ class LspLogic:
                     self.stash.pop(lean_id, None)
                 if version is not None:
                     # Preserve inflight_pulls in streaming mode
-                    old_pulls = state.inflight_pulls if self.opts.stream_diagnostics else {}
+                    old_pulls = (
+                        state.inflight_pulls
+                        if self.opts.stream_diagnostics
+                        else {}
+                    )
                     # Replace with fresh state
                     state = DocumentState(docver=version)
                     state.inflight_pulls.update(old_pulls)
@@ -233,8 +240,9 @@ class LspLogic:
             await forward_all()
             # In streaming mode, pull diagnostics from pull-capable servers
             if self.opts.stream_diagnostics:
-                await self._pull_and_stream_diags(uri, state,
-                                                  method == 'textDocument/didChange')
+                await self._pull_and_stream_diags(
+                    uri, state, method == 'textDocument/didChange'
+                )
         else:
             await forward_all()
 
@@ -301,7 +309,9 @@ class LspLogic:
                     debug("Dropping tardy diagnostics")
                     return
                 else:
-                    debug("Re-sending enhanced aggregation for tardy diagnostics")
+                    debug(
+                        "Re-sending enhanced aggregation for tardy diagnostics"
+                    )
                     await self._publish_pushdiags(uri, state)
             elif self._pushdiags_complete(state):
                 # All servers (push + pull) have responded, send immediately
@@ -363,9 +373,9 @@ class LspLogic:
             and (uri := request_params['textDocument']['uri'])
             and (doc_state := self.document_state.get(uri))
         ):
-            # JT@2026-01-08: TODO: also stash diagnostic 'data'
-            doc_state.inflight_pulls[id(server)] = cast(str|int,
-                                                        payload.get("resultId"))
+            doc_state.inflight_pulls[id(server)] = cast(
+                str | int, payload.get("resultId")
+            )
         elif (
             method == 'textDocument/completion'
             and (uri := request_params.get('textDocument', {}).get('uri'))
@@ -408,6 +418,7 @@ class LspLogic:
         Aggregate payloads (which may be only one!)
         Returns tuple of (aggregate payload, is_error).
         """
+
         def reduce_maybe(items, fn, initial):
             """Reduce items, or return single payload directly if only one."""
             if len(items) == 1:
@@ -543,8 +554,10 @@ class LspLogic:
         # Return the mutated aggregate
         return aggregate
 
-    def _stash_data(self, payload: JSON, server: Server, doc_state: DocumentState):
-        """Stash data field with lean identifier."""
+    def _stash_data(
+        self, payload: JSON, server: Server, doc_state: DocumentState
+    ):
+        """Stash data field with lean identifier.  Mutate payload."""
         # Stash original data (or None) and server, replace with lean id
         original_data = payload.get('data')
         lean_id = id(payload)
@@ -588,23 +601,22 @@ class LspLogic:
         uri is the URI that motivated this.
         """
 
-        async def doit(
-            server: Server, uri: str, state : DocumentState
-        ):
+        async def doit(server: Server, uri: str, state: DocumentState):
             is_error, pull_response = await self.request_server(
                 server,
                 'textDocument/diagnostic',
                 {
                     'textDocument': {'uri': uri},
-                    'previousResultId': state.inflight_pulls.get(id(server))
-            })
+                    'previousResultId': state.inflight_pulls.get(id(server)),
+                },
+            )
 
             if is_error:
-                if pull_response.get('data',[]).get('retriggerRequest'):
+                if pull_response.get('data', []).get('retriggerRequest'):
                     await doit(server, uri, state)
             elif pull_response:
                 resultId = pull_response.get("resultId")
-                state.inflight_pulls[id(server)] = cast(str|int, resultId)
+                state.inflight_pulls[id(server)] = cast(str | int, resultId)
                 diagnostics = pull_response.get('items', [])
                 _add_source_attribution(diagnostics, server)
                 # Send as streamDiagnostics notification
@@ -612,7 +624,7 @@ class LspLogic:
                     'uri': uri,
                     'version': state.docver,
                     'token': f"{server.name}-{id(server)}",
-                    'kind': pull_response.get('kind')
+                    'kind': pull_response.get('kind'),
                 }
                 if diagnostics:
                     params['diagnostics'] = diagnostics
@@ -629,8 +641,8 @@ class LspLogic:
                     if uri != orig_uri:
                         asyncio.create_task(doit(server, uri, state))
 
+
 def _add_source_attribution(diags, server):
     for d in diags:
         if 'source' not in d:
             d['source'] = server.name
-
