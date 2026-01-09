@@ -1,7 +1,6 @@
 """
 rassumfrassum - A simple LSP multiplexer that forwards JSONRPC messages.
 """
-
 import argparse
 import asyncio
 import importlib
@@ -416,6 +415,8 @@ async def run_multiplexer(
 
                     # Otherwise, forward to selected servers
                     target_servers = result
+                    for t in target_servers:
+                        logic.process_request(method, params, t)
                     target_procs = cast(
                         list[InferiorProcess],
                         [s.cookie for s in target_servers],

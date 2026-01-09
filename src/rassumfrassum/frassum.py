@@ -107,12 +107,15 @@ class LspLogic:
         ):
             payload, original_data, server = stashed
             if original_data is not None:
-                # Happy case: restore original data and route to server
+                # Happy case: restore original data and route to original server
                 params['data'] = original_data
                 return [server]
-            else:
-                # Unhappy case: no original data, respond immediately with stashed payload
+            elif payload:
+                # Happier case: respond immediately with stashed payload
                 return DirectResponse(payload=payload)
+            else:
+                # Oops!
+                return []
 
         # initialize goes to all servers
         elif method == 'initialize':
@@ -138,7 +141,7 @@ class LspLogic:
         elif method == 'shutdown':
             return servers
 
-        # Route requests to _all_ servers supporting this
+        # Route codeAction to all supporting servers
         elif method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
 
@@ -284,6 +287,7 @@ class LspLogic:
             and (state := self.document_state.get(uri))
         ):
             diagnostics = params.get('diagnostics', [])
+            self._stash_diagnostics_data(diagnostics, source, state)
             _add_source_attribution(diagnostics, source)
 
             # Check version - drop stale diagnostics
@@ -373,6 +377,9 @@ class LspLogic:
             and (uri := request_params['textDocument']['uri'])
             and (doc_state := self.document_state.get(uri))
         ):
+            self._stash_diagnostics_data(
+                payload.get('items', []), server, doc_state
+            )
             doc_state.inflight_pulls[id(server)] = cast(
                 str | int, payload.get("resultId")
             )
@@ -490,6 +497,27 @@ class LspLogic:
             )
 
         return (res, is_error)
+
+    def process_request(
+        self, method: str, params: JSON, server: Server
+    ) -> None:
+        """Called just before request is forwarded to a specific server"""
+        if (
+            method == 'textDocument/codeAction'
+            and (context := params.get('context'))
+            and (diags := context.get('diagnostics'))
+        ):
+            # TODO: as a further optimization we could use the stashed
+            # data prevent that context diagnostics from other sources
+            # don't travel as context.
+            for d in diags:
+                if (
+                    (lean_id := d.get('data'))
+                    and isinstance(lean_id, int)
+                    and (stashed := self.stash.get(lean_id))
+                ):
+                    _, orig_data, _ = stashed
+                    d['data'] = orig_data
 
     def _merge_initialize_payloads(
         self, aggregate: JSON, payload: JSON, source: Server
@@ -618,6 +646,7 @@ class LspLogic:
                 resultId = pull_response.get("resultId")
                 state.inflight_pulls[id(server)] = cast(str | int, resultId)
                 diagnostics = pull_response.get('items', [])
+                self._stash_diagnostics_data(diagnostics, server, state)
                 _add_source_attribution(diagnostics, server)
                 # Send as streamDiagnostics notification
                 params = {
@@ -640,6 +669,10 @@ class LspLogic:
                 for uri, state in self.document_state.items():
                     if uri != orig_uri:
                         asyncio.create_task(doit(server, uri, state))
+
+    def _stash_diagnostics_data(self, diags, source, state):
+        for diag in diags:
+            self._stash_data(diag, source, state)
 
 
 def _add_source_attribution(diags, server):
