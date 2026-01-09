@@ -280,7 +280,7 @@ async def run_multiplexer(
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct full JSONRPC message from aggregation state."""
 
-        payload, is_error = logic.aggregate_response_payloads(
+        payload, is_error = logic.process_responses(
             ag.method, list(ag.aggregate.values())
         )
 
@@ -554,14 +554,16 @@ async def run_multiplexer(
                         is_error,
                         proc.server,
                     )
-                    # Skip whole aggregation state business if the
+                    item = PayloadItem(payload, proc.server, is_error)
+
+                    # Skip most of aggregation state business if the
                     # original request targeted only one server.
                     if len(responders) == 1:
+                        logic.process_responses(method, [item])
                         await _send_to_client(msg, method)
                         continue
 
                     # Response aggregation
-                    item = PayloadItem(payload, proc.server, is_error)
                     if ag := response_aggregations.get(req_id):
                         await _continue_aggregation(item, ag)
                     else:

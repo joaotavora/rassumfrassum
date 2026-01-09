@@ -350,22 +350,29 @@ class LspLogic:
             return 1000
         return 3000
 
-    def aggregate_response_payloads(
+    def process_responses(
         self,
         method: str,
         items: list[PayloadItem],
     ) -> tuple[JSON | list, bool]:
         """
-        Aggregate payloads.
+        Aggregate payloads (which may be only one!)
         Returns tuple of (aggregate payload, is_error).
         """
+        def reduce_maybe(items, fn, initial):
+            """Reduce items, or return single payload directly if only one."""
+            if len(items) == 1:
+                return items[0].payload
+            return reduce(fn, items, initial)
 
+        is_error = False
         # If all responses are errors, return the first error
         if all(item.is_error for item in items):
-            return (items[0].payload, True)
+            res = items[0].payload
+            is_error = True
 
         # Otherwise, skip errors and aggregate successful responses
-        items = [item for item in items if not item.is_error]
+        items = [item for item in items if (not item.is_error) and item.payload]
 
         if method == 'textDocument/diagnostic':
             all_items = []
@@ -379,9 +386,9 @@ class LspLogic:
             res = {'items': all_items, 'kind': "full"}
 
         elif method == 'textDocument/codeAction':
-            res = reduce(
-                lambda acc, item: acc + (cast(list, item.payload) or []),
+            res = reduce_maybe(
                 items,
+                lambda acc, item: acc + (cast(list, item.payload) or []),
                 [],
             )
 
@@ -392,18 +399,18 @@ class LspLogic:
 
             # FIXME: Deep merging CompletionList properties is wrong
             # for many fields (e.g., isIncomplete should probably be OR'd)
-            res = reduce(
-                lambda acc, item: dmerge(acc, normalize(item.payload)),
+            res = reduce_maybe(
                 items,
+                lambda acc, item: dmerge(acc, normalize(item.payload)),
                 {},
             )
 
         elif method == 'initialize':
-            res = reduce(
+            res = reduce_maybe(
+                items,
                 lambda acc, item: self._merge_initialize_payloads(
                     acc, cast(JSON, item.payload), item.server
                 ),
-                items,
                 {},
             )
 
@@ -411,13 +418,13 @@ class LspLogic:
             res = {}
 
         else:
-            res = reduce(
-                lambda acc, item: dmerge(acc, cast(JSON, item.payload)),
+            res = reduce_maybe(
                 items,
+                lambda acc, item: dmerge(acc, cast(JSON, item.payload)),
                 {},
             )
 
-        return (res, False)
+        return (res, is_error)
 
     def _merge_initialize_payloads(
         self, aggregate: JSON, payload: JSON, source: Server
