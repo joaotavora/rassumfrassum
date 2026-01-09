@@ -8,26 +8,21 @@ Connect an LSP client to multiple LSP servers.
 The `rass` program, the main entry point, behaves like an LSP stdio
 server, so clients think they are talking to single LSP server, even
 though they are secretly talking to many.  Behind the scenes more
-stdio [LSP][lsp] server subprocesses are spawned.
+stdio [LSP][lsp] server subprocesses are spawned.  Zero dependencies
+beyond Python standard library (3.10+).
 
 ![demo](./doc/demo.gif)
 
 ## Setup
 
-Install the `rass` tool:
+Install the `rass` tool and some language servers, say, Python's
+[ty][ty] and [ruff][ruff]:
 
 ```bash
-pip install rassumfrassum
+pip install rassumfrassum ty ruff
 ```
 
-Now install some language servers, say Python's [basedpyright][basedpyright] and [ruff][ruff]:
-
-```bash
-npm install -g basedpyright
-pip install ruff
-```
-
-Tell your LSP client to call `rass python`:
+Now teach your LSP client to call `rass`:
 
 * In Emacs's [Eglot][eglot], find a Python file in a project and `C-u
 M-x eglot RET rass python RET`.
@@ -43,20 +38,30 @@ vim.lsp.config('rass-python', {
 vim.lsp.enable('rass-python')
 ```
 
+## Command line
+
+`rass python` is the equivalent of 
+```bash
+rass -- ty server -- ruff server
+```
+
+which works just as well.  You can compose as many servers as you want
+this way.  See `rass --help` for more help.
+
 ## Presets
 
 Presets give you a uniform way to start typical sets of language
 servers for a given language, while being flexible enough for
-tweaking.  Most presets would be Python files with a `servers()`
-function that returns a list of server commands.  
+tweaking.  Many presets are simple and are just Python files with a
+`servers()` function that returns a list of server commands.  
 
-Advanced presets can hook into LSP messages to hide the typical
+So-called hooking presets hook into LSP messages to hide the typical
 initialization/configuration pains from clients, see
 [vue.py][vue-preset].
 
 ### Using Presets
 
-The bundled `python` preset runs [basedpyright][basedpyright] and [ruff][ruff]:
+The bundled `python` preset runs [ty][ty] and [ruff][ruff]:
 
 ```bash
 rass python
@@ -68,6 +73,20 @@ For example, to add [codebook][codebook] for spell checking:
 ```bash
 rass python -- codebook-lsp server
 ```
+
+### Bundled presets
+
+It's early days and Rassumfrassum bundles only a few of these.  Some
+are very simple, and some are more advanced.  Your mileage may vary.
+
+* `python`: `ty` + `ruff`
+
+* `basedruff`: `basedpyright-langserver` + `ruff`
+
+* `ts`: hooking preset for `typescript-language-server` and `eslint`
+
+* `vue`: hooking preset for `vue-language-server` and
+  `tailwindcss-language-server`
 
 ### User Presets
 
@@ -91,27 +110,25 @@ def servers():
     ]
 ```
 
-## Issues?
+## Performance
 
-[Read this first](#bugs_and_issues), please.
+Performance is always a question, and it's early days.  But some of
+the optimizations that rass makes, like caching the `data` cookies of
+code actions, completions and diagnostics and not sending them to the
+client may make a non-negligible difference in your client's
+performance.  The `ruff` server in sometimes sends more than half its
+weight of diagnostics lists in `data` cookies.  Other more aggressive
+optimizations are possible in the future, like capping diagnostics and
+completions.  
 
-## Features
+Python seems to be "fast enough".  Early measurements show rass to
+spend 8x as much time waiting for input/output as running
+instructions.  This makes sense as most of its work is redirecting
+messages around, doing the odd JSON sniffing/injection here and there.
 
-- Zero dependencies beyond Python standard library (3.10+)
-
-## Under the hood
-
-- Tries its best to merge server capabilities announcements into a
-  consistent aggregate capability set.  
-- Track which inferior server supports which capability.
-- Merges and synchronizes diagnostics from multiple servers into a
-  single `textDocument/publishDiagnostics` event.
-- Client requests for `textDocument/codeActions` and
-  `textDocument/completions` go to all servers supporting it, other
-  requests go to the first server that supports the corresponding
-  capability.
-- All server requests go to the client.  ID tweaking is necessary
-  because servers don't know about each other and they could clash.
+See also the experimental [streaming diagnostics
+extension](#streaming-diagnostics-protocol-extension) section for
+another potential optimization opportunity for clients.
 
 ### Architecture
 
@@ -168,6 +185,39 @@ The `stderr` output of rass is useful for peeking into the
 conversation between all entities and understanding how the
 multiplexer operates.
 
+### Options to `rass`
+
+Use `--help` to see all options.
+
+The `--delay-ms N` option delays all JSONRPC messages sent to the
+client by N milliseconds. Each message gets its own independent timer,
+so if two messages arrive at `t=0.5s` and `t=1.5s` with a 3000ms
+delay, they'll be dispatched at `t=3.5s` and `t=4.5s`
+respectively. Useful for diagnostics and testing.
+
+The `--drop-tardy` option controls an aspect of the "aggregation".  If
+it's true and a server takes too long to respond to a request, or send
+a mergeworthy notification, any messages that arrive too late are
+simply dropped and the client sees whatever it got when the timeout
+expired.  If it's false, the most up-to-date state of the aggregation
+is simply retransmitted to the client.  The default is false.
+
+The `--logic-class CLASS` option specifies which routing logic class
+to use.  The default is `LspLogic`.  You can specify a simple class
+name (which will be looked up in the `rassumfrassum.frassum` module)
+or a fully qualified class name like `mymodule.MyCustomLogic`.  This
+is useful for extending rass with custom routing behavior by
+subclassing `LspLogic`.
+
+The `--stream-diagnostics` and `--no-stream-diagnostics` options
+control whether diagnostics are streamed incrementally or aggregated
+before sending. When streaming is enabled (the default), clients
+receive `$/streamDiagnostics` notifications as each server responds.
+When disabled, diagnostics are aggregated and sent as standard
+`textDocument/publishDiagnostics` notifications. See the [Streaming
+Diagnostics Protocol Extension](#streaming-diagnostics-protocol-extension)
+section for details.
+
 ### FAQ 
 
 _(...not really, noone's really asked anything yet...)_
@@ -219,39 +269,6 @@ bits are definitely an LLM's.
 I might rewrite this in Rust or C++ if it makes sense.  Having an LSP
 middleware opens up some possibilities for making JSON communication
 more efficient.
-  
-### Options to `rass`
-
-Use `--help` to see all options.
-
-The `--delay-ms N` option delays all JSONRPC messages sent to the
-client by N milliseconds. Each message gets its own independent timer,
-so if two messages arrive at `t=0.5s` and `t=1.5s` with a 3000ms
-delay, they'll be dispatched at `t=3.5s` and `t=4.5s`
-respectively. Useful for diagnostics and testing.
-
-The `--drop-tardy` option controls an aspect of the "aggregation".  If
-it's true and a server takes too long to respond to a request, or send
-a mergeworthy notification, any messages that arrive too late are
-simply dropped and the client sees whatever it got when the timeout
-expired.  If it's false, the most up-to-date state of the aggregation
-is simply retransmitted to the client.  The default is false.
-
-The `--logic-class CLASS` option specifies which routing logic class
-to use.  The default is `LspLogic`.  You can specify a simple class
-name (which will be looked up in the `rassumfrassum.frassum` module)
-or a fully qualified class name like `mymodule.MyCustomLogic`.  This
-is useful for extending rass with custom routing behavior by
-subclassing `LspLogic`.
-
-The `--stream-diagnostics` and `--no-stream-diagnostics` options
-control whether diagnostics are streamed incrementally or aggregated
-before sending. When streaming is enabled (the default), clients
-receive `$/streamDiagnostics` notifications as each server responds.
-When disabled, diagnostics are aggregated and sent as standard
-`textDocument/publishDiagnostics` notifications. See the [Streaming
-Diagnostics Protocol Extension](#streaming-diagnostics-protocol-extension)
-section for details.
 
 <a name=streaming-diagnostics-protocol-extension></a>
 ### Streaming diagnostics
@@ -320,3 +337,6 @@ in the `eglot-handle-notification` method for
 [codebook]: https://github.com/blopker/codebook
 [typos]: https://github.com/tekumara/typos-lsp
 [vue-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/vue.py
+[python-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/python.py
+[basedruff-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/basedruff.py
+[ts-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/ts.py

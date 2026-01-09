@@ -1,9 +1,9 @@
-"""Python preset: basedpyright + ruff."""
+"""Python preset: ty + ruff."""
 
 def servers():
-    """Return basedpyright and ruff server commands."""
+    """Return ty and ruff server commands."""
     return [
-        ['basedpyright-langserver', '--stdio'],
+        ['ty', 'server'],
         ['ruff', 'server']
     ]
 
