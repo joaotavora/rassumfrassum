@@ -85,6 +85,7 @@ class LspLogic:
         self.servers: dict[int, Server] = {id(s): s for s in servers}
         # Stash for lean identifiers: lean_id -> (payload, original_data, server)
         self.stash: dict[int, tuple[JSON, JSON | None, Server]] = {}
+        self.commands_map: dict[str, Server] = {}
 
     async def on_client_request(
         self, method: str, params: JSON, servers: list[Server]
@@ -144,6 +145,10 @@ class LspLogic:
         # Route codeAction to all supporting servers
         elif method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
+
+        elif method == 'workspace/executeCommand':
+            probe = self.commands_map.get(cast(str, params.get('command')))
+            return [probe] if probe else []
 
         # Completions is special
         elif method == 'textDocument/completion':
@@ -402,6 +407,13 @@ class LspLogic:
                 server.name = payload['serverInfo']['name']
             caps = payload.get('capabilities')
             server.caps = caps.copy() if caps else {}
+
+            # index the commands of "executeCommandProvider"
+            if (p := payload.get("executeCommandProvider")) and (
+                cmds := p.get("commands")
+            ):
+                for c in cmds:
+                    self.commands_map[c] = server
 
             # In streaming mode, remove diagnosticProvider from the merged caps
             # (but keep it in server.caps for our internal use)
