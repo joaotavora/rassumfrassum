@@ -11,7 +11,7 @@ trap "rm -f '$FIFO'" EXIT INT TERM
 
 # S1 (primary) responds immediately
 # S2 (secondary) delays initialize response by 3000ms (exceeds 2500 default timeout)
-./client.py < "$FIFO" | ./../../rass --drop-tardy \
+./client.py < "$FIFO" | python3 -m rassumfrassum --drop-tardy \
          -- python ./server.py --name s1 \
          -- python ./server.py --name s2 --initialize-delay 3000 \
 > "$FIFO"

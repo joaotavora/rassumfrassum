@@ -11,6 +11,6 @@ FIFO=$(mktemp -u)
 mkfifo "$FIFO"
 trap "rm -f '$FIFO'" EXIT INT TERM
 
-./client.py < "$FIFO" | ./../../rass --logic-class custom_logic.CustomLogic \
+./client.py < "$FIFO" | python3 -m rassumfrassum --logic-class custom_logic.CustomLogic \
          -- python ./server.py \
 > "$FIFO"

@@ -41,12 +41,22 @@ vim.lsp.enable('rass-python')
 ## Command line
 
 `rass python` is the equivalent of 
+
 ```bash
 rass -- ty server -- ruff server
 ```
 
 which works just as well.  You can compose as many servers as you want
-this way.  See `rass --help` for more help.
+this way.  See `rass --help` for more help.  The `rass` program
+executable is installed by the package manager.  
+
+If you need to run this from a Git checkout with no installation at
+all:
+
+```bash
+export PYTHONPATH=$PWD/src
+python3 -m rassumfrassum -- ty server -- ruf server
+```
 
 ## Presets
 

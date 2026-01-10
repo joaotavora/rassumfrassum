@@ -23,19 +23,19 @@ from .util import (
 )
 
 
-def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
+def parse_server_commands(argv: list[str]) -> tuple[list[str], list[list[str]]]:
     """
-    Split args on '--' separators.
+    Split argv on '--' separators.
     Returns (rass_args, [server_command1, server_command2, ...])
     """
-    if "--" not in args:
-        return args, []
+    if "--" not in argv:
+        return argv, []
 
     # Find all '--' separator indices
-    separator_indices = [i for i, arg in enumerate(args) if arg == "--"]
+    separator_indices = [i for i, arg in enumerate(argv) if arg == "--"]
 
     # Everything before first '--' is rass options
-    rass_args = args[: separator_indices[0]]
+    rass_args = argv[: separator_indices[0]]
 
     # Split server commands
     server_commands: list[list[str]] = []
@@ -45,24 +45,26 @@ def parse_server_commands(args: list[str]) -> tuple[list[str], list[list[str]]]:
         end = (
             separator_indices[i + 1]
             if i + 1 < len(separator_indices)
-            else len(args)
+            else len(argv)
         )
 
-        server_cmd: list[str] = args[start:end]
+        server_cmd: list[str] = argv[start:end]
         if server_cmd:  # Only add non-empty commands
             server_commands.append(server_cmd)
 
     return rass_args, server_commands
 
 
-def main() -> None:
+def main(argv=None) -> None:
     """
     Parse arguments and start the multiplexer.
     """
-    args = sys.argv[1:]
+    if argv is None:
+        import sys
+        argv = sys.argv[1:]
 
     # Parse multiple '--' separators for multiple servers
-    rass_args, server_commands = parse_server_commands(args)
+    rass_args, server_commands = parse_server_commands(argv)
 
     # Parse rass options with argparse
     parser = argparse.ArgumentParser(
