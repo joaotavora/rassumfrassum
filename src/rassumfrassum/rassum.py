@@ -421,17 +421,28 @@ async def run_multiplexer(
                         list[InferiorProcess],
                         [s.cookie for s in target_servers],
                     )
+                    if target_procs:
+                        # Send to selected servers
+                        for p in target_procs:
+                            await write_lsp_message(p.stdin, msg)
+                            log_message(f"[{p.name}] -->", msg, method)
 
-                    # Send to selected servers
-                    for p in target_procs:
-                        await write_lsp_message(p.stdin, msg)
-                        log_message(f"[{p.name}] -->", msg, method)
-
-                    inflight_requests[cast(ReqId, id)] = (
-                        method,
-                        cast(JSON, params),
-                        set(target_procs),
-                    )
+                        inflight_requests[cast(ReqId, id)] = (
+                            method,
+                            cast(JSON, params),
+                            set(target_procs),
+                        )
+                    else:
+                        # respond with rass error
+                        await _send_to_client(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "error": f"[rass] no servers to handle "
+                                f"method='{method}' with params='{params}'!",
+                            },
+                            method,
+                        )
                 else:
                     # Response from client (to a server request)
                     id = cast(ReqId, id)
