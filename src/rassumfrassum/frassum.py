@@ -370,6 +370,10 @@ class LspLogic:
         ):
             for action in cast(list, payload):
                 self._stash_data(action, server, doc_state)
+                if (command := action.get("command")) and (
+                    command_name := command.get("command")
+                ):
+                    self.commands_map[command_name] = server
         elif (
             method == 'textDocument/codeAction'
             and (uri := request_params['textDocument']['uri'])
