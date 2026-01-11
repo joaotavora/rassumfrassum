@@ -656,7 +656,7 @@ class LspLogic:
             )
 
             if is_error:
-                if pull_response.get('data', []).get('retriggerRequest'):
+                if pull_response.get('data', {}).get('retriggerRequest'):
                     await doit(server, uri, state)
             elif pull_response:
                 resultId = pull_response.get("resultId")
