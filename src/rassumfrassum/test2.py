@@ -73,6 +73,11 @@ class LspTestEndpoint:
         await write_message(self.writer, msg)
         return req_id
 
+    async def respond(self, req_id: int, result: JSON | None) -> None:
+        """Send a response to a server request."""
+        msg = {'jsonrpc': '2.0', 'id': req_id, 'result': result}
+        await write_message(self.writer, msg)
+
     async def read_notification(self, method: str) -> JSON:
         """Read messages until we get a notification with the given method."""
         while True:

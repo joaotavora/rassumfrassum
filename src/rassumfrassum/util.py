@@ -97,3 +97,29 @@ def dmerge(d1: dict, d2: dict):
     return result
 
 
+def expand_braces(pattern: str) -> list[str]:
+    """Expand {a,b,c} brace groups in glob pattern.
+
+    Examples:
+        "**/*.{ts,js}" -> ["**/*.ts", "**/*.js"]
+        "*.{a,b}.{x,y}" -> ["*.a.x", "*.a.y", "*.b.x", "*.b.y"]
+        "no-braces" -> ["no-braces"]
+    """
+    import re
+
+    # Find first brace group
+    match = re.search(r'\{([^}]+)\}', pattern)
+    if not match:
+        return [pattern]
+
+    # Split alternatives by comma
+    alternatives = match.group(1).split(',')
+    prefix = pattern[: match.start()]
+    suffix = pattern[match.end() :]
+
+    # Recursively expand remaining braces
+    results = []
+    for alt in alternatives:
+        for expanded in expand_braces(prefix + alt + suffix):
+            results.append(expanded)
+    return results

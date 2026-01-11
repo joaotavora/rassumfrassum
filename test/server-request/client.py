@@ -6,7 +6,6 @@ Test client that handles server requests.
 import asyncio
 
 from rassumfrassum.test2 import LspTestEndpoint, log
-from rassumfrassum.json import write_message
 
 async def main():
     """Send a sequence of LSP messages and handle server requests."""
@@ -24,12 +23,7 @@ async def main():
 
     # Then respond to both requests
     for id in request_ids:
-        response = {
-            'jsonrpc': '2.0',
-            'id': id,
-            'result': [{'pythonPath': '/usr/bin/python3'}]
-        }
-        await write_message(client.writer, response)
+        await client.respond(id, [{'pythonPath': '/usr/bin/python3'}])
         log("client", f"Responding to server request id={id}")
 
     for i in range(2):

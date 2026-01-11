@@ -5,7 +5,9 @@ LSP-specific message routing and merging logic.
 import asyncio
 from dataclasses import dataclass, field
 from functools import reduce
+from pathlib import PurePosixPath
 from typing import cast, Callable, Awaitable, Optional
+from urllib.parse import unquote, urlparse
 
 from .json import JSON
 from .util import (
@@ -13,6 +15,7 @@ from .util import (
     is_scalar,
     debug,
     info,
+    expand_braces,
 )
 
 
@@ -86,6 +89,8 @@ class LspLogic:
         # Stash for lean identifiers: lean_id -> (payload, original_data, server)
         self.stash: dict[int, tuple[JSON, JSON | None, Server]] = {}
         self.commands_map: dict[str, Server] = {}
+        # Track file watchers: registration_id -> (server, list of expanded glob patterns)
+        self.file_watchers: dict[str, tuple[Server, list[str]]] = {}
 
     async def on_client_request(
         self, method: str, params: JSON, servers: list[Server]
@@ -251,6 +256,18 @@ class LspLogic:
                 await self._pull_and_stream_diags(
                     uri, state, method == 'textDocument/didChange'
                 )
+        elif method == 'workspace/didChangeWatchedFiles' and (
+            changes := params.get("changes")
+        ):
+            # Forward only to servers with matching watchers
+            servers_to_notify: set[Server] = set()
+            for change in changes:
+                if uri := change.get("uri"):
+                    for server, patterns in self.file_watchers.values():
+                        if any(_uri_matches_pattern(uri, p) for p in patterns):
+                            servers_to_notify.add(server)
+            for server in servers_to_notify:
+                await self.notify_server(server, method, params)
         else:
             await forward_all()
 
@@ -277,7 +294,24 @@ class LspLogic:
             DirectResponse to send immediately without forwarding, or
             None to forward the request normally
         """
-        pass
+        # Track file watcher registrations
+        if method == "client/registerCapability" and (
+            registrations := params.get("registrations")
+        ):
+            for reg in registrations:
+                if (
+                    reg.get("method") == "workspace/didChangeWatchedFiles"
+                    and (reg_id := reg.get("id"))
+                    and (opts := reg.get("registerOptions"))
+                    and (watchers := opts.get("watchers"))
+                ):
+                    # Process watchers: expand braces, combine baseUri+pattern
+                    expanded_patterns = []
+                    for watcher in watchers:
+                        expanded_patterns.extend(_process_watcher(watcher))
+                    if expanded_patterns:
+                        self.file_watchers[reg_id] = (source, expanded_patterns)
+        return None
 
     async def on_server_notification(
         self, method: str, params: JSON, source: Server
@@ -695,3 +729,51 @@ def _add_source_attribution(diags, server):
     for d in diags:
         if 'source' not in d:
             d['source'] = server.name
+
+
+def _process_watcher(watcher: JSON) -> list[str]:
+    """Process an LSP "watcher" into a list of expanded glob patterns.
+
+    Returns empty list for malformed watchers."""
+    glob_pattern = watcher.get("globPattern")
+    if not glob_pattern:
+        return []  # Malformed watcher
+
+    if isinstance(glob_pattern, str):
+        # Simple glob pattern like "**/*.toml" - expand braces
+        return expand_braces(glob_pattern)
+
+    elif isinstance(glob_pattern, dict):
+        # Relative pattern with baseUri - combine and expand
+        base_uri = glob_pattern.get("baseUri")
+        pattern = glob_pattern.get("pattern")
+        if not base_uri or not pattern:
+            return []  # Malformed
+
+        # Parse baseUri to get path
+        base_parsed = urlparse(base_uri)
+        if base_parsed.scheme != "file":
+            return []  # Only support file:// URIs
+
+        base_path = unquote(base_parsed.path)
+        # Combine base path with pattern, then expand braces
+        expanded = expand_braces(pattern)
+        return [f"{base_path}/{p}" for p in expanded]
+
+    return []  # Unknown format
+
+
+def _uri_matches_pattern(uri: str, pattern: str) -> bool:
+    """Check if a URI matches a glob pattern string."""
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return False
+
+    path = unquote(parsed.path)
+    posix_path = PurePosixPath(path)
+
+    try:
+        return posix_path.match(pattern)
+    except Exception:
+        # Pattern matching error - be conservative and forward
+        return True

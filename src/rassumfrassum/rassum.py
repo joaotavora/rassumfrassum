@@ -17,7 +17,7 @@ from .json import (
 )
 from .json import (
     read_message as read_lsp_message,
-)
+) 
 from .json import (
     write_message as write_lsp_message,
 )
