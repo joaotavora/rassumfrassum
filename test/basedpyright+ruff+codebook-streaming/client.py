@@ -6,7 +6,7 @@ Tests three-server diagnostic streaming (no aggregation).
 
 import asyncio
 
-from rassumfrassum.test2 import LspTestEndpoint, log
+from rassumfrassum.test2 import LspTestEndpoint, scaled_timeout, log
 
 async def main():
     """Test three-server diagnostics with tardy updates."""
@@ -48,7 +48,7 @@ bar(42);  # Type error: passing int to str
     })
 
     diagnostics_by_uri_and_source = {}  # uri -> source -> [diags]
-    log("client", "Waiting 3.5 seconds for diagnostics (including tardy)...")
+    log("client", "Waiting diagnostics (including tardy)...")
 
     async def collect_diags():
         """Collect diagnostic notifications."""
@@ -62,7 +62,7 @@ bar(42);  # Type error: passing int to str
                 log("client", f"Got {len(diags)} diagnostic(s) from {source} for {uri}")
 
     try:
-        await asyncio.wait_for(collect_diags(), timeout=2)
+        await asyncio.wait_for(collect_diags(), scaled_timeout(2))
     except asyncio.TimeoutError:
         log("client", "Timeout reached, done collecting diagnostics")
 

@@ -8,7 +8,7 @@ aggregations, causing other files' diagnostics to be reset to empty.
 
 import asyncio
 
-from rassumfrassum.test2 import LspTestEndpoint, log
+from rassumfrassum.test2 import LspTestEndpoint, log, scaled_timeout
 
 
 async def main():
@@ -55,7 +55,7 @@ async def main():
             log("client", f"Got {len(diags)} diagnostic(s) for {uri}")
 
     try:
-        await asyncio.wait_for(collect_diags(), timeout=1.5)
+        await asyncio.wait_for(collect_diags(), timeout=scaled_timeout(1.5))
     except asyncio.TimeoutError:
         pass
 
@@ -90,7 +90,7 @@ async def main():
 
     # Collect diagnostics after the change
     try:
-        await asyncio.wait_for(collect_diags(), timeout=1.5)
+        await asyncio.wait_for(collect_diags(), timeout=scaled_timeout(1.5))
     except asyncio.TimeoutError:
         pass
 

@@ -4,6 +4,7 @@ Async test helpers for LSP testing.
 
 import asyncio
 import inspect
+import os
 import sys
 from typing import Callable, cast
 
@@ -411,3 +412,8 @@ def run_toy_server(
 
     # Run the async implementation
     asyncio.run(_run_toy_server_async(name, version, capabilities, request_handlers, notification_handlers, raw_request_handlers))
+
+def scaled_timeout(timeout: int | float) -> int | float:
+    """Scale timeout by TIMEOUT_SCALE environment variable (default 1.0)."""
+    scale = float(os.environ.get('TIMEOUT_SCALE', '1.0'))
+    return timeout * scale
