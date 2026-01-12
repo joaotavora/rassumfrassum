@@ -1,6 +1,8 @@
 #!/bin/bash
 # Run all tests in parallel and report results
 
+TIMEOUT=${TIMEOUT:-10}
+
 # Colorize helper (set to false to disable colors)
 USE_COLOR=true
 colorize() {
@@ -39,7 +41,7 @@ for d in $TEST_DIRS; do
     # Run in background, capturing output and timing
     (
         start=$(date +%s%N)
-        output=$(timeout 10 "$d/run.sh" 2>&1)
+        output=$(timeout "$TIMEOUT" "$d/run.sh" 2>&1)
         rc=$?
         end=$(date +%s%N)
         elapsed_ns=$((end - start))
