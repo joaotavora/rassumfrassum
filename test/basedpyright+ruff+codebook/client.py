@@ -6,7 +6,7 @@ Tests three-server diagnostic aggregation with tardy updates using async.
 
 import asyncio
 
-from rassumfrassum.test2 import LspTestEndpoint, log
+from rassumfrassum.test2 import LspTestEndpoint, log, maybe_timeout
 
 async def main():
     """Test three-server diagnostics with tardy updates."""
@@ -65,7 +65,7 @@ bar(42);  # Type error: passing int to str
                 log("client", f"Got {len(diags)} diagnostic(s) for {uri}")
 
     try:
-        await asyncio.wait_for(collect_diags(), timeout=2)
+        await asyncio.wait_for(collect_diags(), timeout=maybe_timeout(2))
     except asyncio.TimeoutError:
         log("client", "Timeout reached, done collecting diagnostics")
 

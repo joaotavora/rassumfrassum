@@ -7,7 +7,7 @@ the cancel notification is properly forwarded to servers.
 
 import asyncio
 
-from rassumfrassum.test2 import LspTestEndpoint, log
+from rassumfrassum.test2 import LspTestEndpoint, log, maybe_timeout
 
 async def main():
     """Test that $/cancelRequest properly cancels requests."""
@@ -36,14 +36,14 @@ async def main():
     # Using read_message() instead of read_notification() to catch any
     # buggy response that might slip through from rass
     log("client", "Waiting for first $/yeahGotIt notification...")
-    msg1 = await client.read_message(timeout_sec=1.0)
+    msg1 = await client.read_message(timeout_sec=maybe_timeout(1.0))
     assert 'method' in msg1, f"Expected notification, got: {msg1}"
     assert msg1['method'] == '$/yeahGotIt', f"Expected $/yeahGotIt, got {msg1['method']}"
     server1 = msg1['params'].get('server')
     log("client", f"Got $/yeahGotIt from {server1}")
 
     log("client", "Waiting for second $/yeahGotIt notification...")
-    msg2 = await client.read_message(timeout_sec=1.0)
+    msg2 = await client.read_message(timeout_sec=maybe_timeout(1.0))
     assert 'method' in msg2, f"Expected notification, got: {msg2}"
     assert msg2['method'] == '$/yeahGotIt', f"Expected $/yeahGotIt, got {msg2['method']}"
     server2 = msg2['params'].get('server')

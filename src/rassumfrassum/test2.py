@@ -4,6 +4,7 @@ Async test helpers for LSP testing.
 
 import asyncio
 import inspect
+import os
 import sys
 from typing import Callable, cast
 
@@ -78,7 +79,7 @@ class LspTestEndpoint:
         msg = {'jsonrpc': '2.0', 'id': req_id, 'result': result}
         await write_message(self.writer, msg)
 
-    async def read_message(self, timeout_sec: float = 5.0) -> JSON:
+    async def read_message(self, timeout_sec: float | None = 5.0) -> JSON:
         """
         Read a single JSONRPC message with timeout.
 
@@ -411,3 +412,6 @@ def run_toy_server(
 
     # Run the async implementation
     asyncio.run(_run_toy_server_async(name, version, capabilities, request_handlers, notification_handlers, raw_request_handlers))
+
+def maybe_timeout(timeout: int | float) -> int | float | None:
+    return None if 'NO_INTERNAL_TIMEOUTS' in os.environ else timeout
