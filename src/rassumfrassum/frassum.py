@@ -12,7 +12,6 @@ from urllib.parse import unquote, urlparse
 from .json import JSON
 from .util import (
     dmerge,
-    nsmerge,
     is_scalar,
     debug,
     info,
@@ -498,7 +497,16 @@ class LspLogic:
         # Otherwise, skip errors and aggregate successful responses
         items = [item for item in items if (not item.is_error) and item.payload]
 
-        if method == 'textDocument/diagnostic':
+        if method == 'textDocument/definition':
+            res = reduce_maybe(
+                items,
+                lambda acc, item: self._merge_textDocument_findDefinition_payloads(
+                    acc, cast(JSON, item.payload), item.server
+                ),
+                [],
+            )
+
+        elif method == 'textDocument/diagnostic':
             all_items = []
             for item in items:
                 p = cast(JSON, item.payload)
@@ -549,7 +557,7 @@ class LspLogic:
         else:
             res = reduce_maybe(
                 items,
-                lambda acc, item: nsmerge(acc, cast(JSON, item.payload)),
+                lambda acc, item: dmerge(acc, cast(JSON, item.payload)),
                 {},
             )
 
@@ -638,6 +646,27 @@ class LspLogic:
             }
         # Return the mutated aggregate
         return aggregate
+
+    def _merge_textDocument_findDefinition_payloads(self, aggregate: list[JSON], payload: JSON | list[JSON], source: Server) -> list[JSON]:
+        if isinstance(payload, dict):
+            payload = [payload]
+
+        def to_location_link(value: JSON) -> JSON:
+            if "targetUri" in value:
+                return value
+            # Location -> LocationLink
+            return {"targetUri": value["uri"], "targetSelectionRange": value["range"], "targetRange": value["range"]}
+
+        def location_link_equal(l1: JSON, l2: JSON) -> bool:
+            return l1["targetSelectionRange"] == l2["targetSelectionRange"]
+
+        result = []
+        for v in payload:
+            v = to_location_link(v)
+            if not any(location_link_equal(v, other) for other in aggregate):
+                result.append(v)
+
+        return aggregate + result
 
     def _stash_data(
         self, payload: JSON, server: Server, doc_state: DocumentState

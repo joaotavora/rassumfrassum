@@ -1,4 +1,3 @@
-from typing import Any
 from datetime import datetime
 import sys
 
@@ -73,31 +72,7 @@ log = info
 def is_scalar(v):
     return not isinstance(v, (dict, list, set, tuple))
 
-def nsmerge(v1: Any, v2: Any) -> dict | list:
-    """Merge non-scalars v1 and v2 destructively.
-    - Two dicts merge with `dmerge`, resulting in a dict.
-    - Any other type combination results in a list. If present,
-      empty dictionaries are not included in it.
-    """
-
-    if is_scalar(v1) or is_scalar(v2):
-        raise ValueError("Can't merge top-level scalar values")
-
-    v1dict = isinstance(v1, dict)
-    v2dict = isinstance(v2, dict)
-
-    if v1dict or v2dict:
-        if v1dict and v2dict:
-            return dmerge(v1, v2)
-
-        if v1dict:
-            return ([v1] if v1 else []) + list(v2)
-        else:
-            return ([v2] if v2 else []) + list(v1)
-
-    return list(v1) + list(v2)
-
-def dmerge(d1: dict, d2: dict) -> dict:
+def dmerge(d1: dict, d2: dict):
     """Merge d2 into d1 destructively.
     Non-scalars win over scalars; d1 wins on scalar conflicts."""
 
