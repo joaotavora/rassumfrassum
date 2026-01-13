@@ -500,7 +500,7 @@ class LspLogic:
         if method == 'textDocument/definition':
             res = reduce_maybe(
                 items,
-                lambda acc, item: self._merge_textDocument_findDefinition_payloads(
+                lambda acc, item: self._merge_textDocument_definition_payloads(
                     acc, cast(JSON, item.payload), item.server
                 ),
                 [],
@@ -647,7 +647,7 @@ class LspLogic:
         # Return the mutated aggregate
         return aggregate
 
-    def _merge_textDocument_findDefinition_payloads(self, aggregate: list[JSON], payload: JSON | list[JSON], source: Server) -> list[JSON]:
+    def _merge_textDocument_definition_payloads(self, aggregate: list[JSON], payload: JSON | list[JSON], source: Server) -> list[JSON]:
         if isinstance(payload, dict):
             payload = [payload]
 
