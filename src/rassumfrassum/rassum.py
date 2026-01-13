@@ -403,6 +403,71 @@ async def run_multiplexer(
             await _respond_to_client(ag.id, _reconstruct(ag), method)
             ag.dispatched = True
 
+    async def handle_client_request(req_id: ReqId, method: str, params: JSON):
+        """Handle a single client request (spawned as task to avoid blocking)."""
+        nonlocal shutting_down
+
+        # Track shutdown requests
+        if method == "shutdown":
+            shutting_down = True
+
+        # Determine which servers to route to or get direct response
+        result = await logic.on_client_request(
+            method, params, [proc.server for proc in procs]
+        )
+
+        # Check if we should respond immediately without forwarding
+        # (if we weren't cancelled, that is).
+        if isinstance(result, DirectResponse) and inflight_requests.get(req_id):
+            await _respond_to_client(
+                req_id,
+                {
+                    "error" if result.is_error else "result": result.payload,
+                },
+                method,
+            )
+            return
+
+        # Otherwise, forward to selected servers
+        target_servers = result
+        for t in target_servers:
+            logic.process_request(method, params, t)
+        target_procs = cast(
+            list[InferiorProcess],
+            [s.cookie for s in target_servers],
+        )
+        if target_procs:
+            # Send to selected servers
+            for p in target_procs:
+                msg = {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "method": method,
+                    "params": params,
+                }
+                await write_lsp_message(p.stdin, msg)
+                log_message(f"[{p.name}] -->", msg, method)
+
+            # Update tracking to include server procs, but only if we
+            # weren't cancelled already.
+            if existing := inflight_requests.get(req_id):
+                method_stored, params_stored, _ = existing
+                inflight_requests[req_id] = (
+                    method_stored,
+                    params_stored,
+                    set(target_procs),
+                )
+        else:
+            # respond with rass error
+            await _respond_to_client(
+                req_id,
+                {
+                    "error": f"[rass] no servers to handle "
+                    f"method='{method}' with params='{params}'!",
+                },
+                method,
+            )
+
     async def handle_client_messages():
         """Read from client and route to appropriate servers."""
         nonlocal shutting_down
@@ -426,7 +491,9 @@ async def run_multiplexer(
                         if probe:
                             # Prevents responses to the cancelled
                             # request from making it to the client...
-                            _, _,target_procs = inflight_requests.pop(cancelled_id)
+                            _, _, target_procs = inflight_requests.pop(
+                                cancelled_id
+                            )
                             # ...but still forward $/cancelRequest to
                             # servers that got the request, of course.
                             for p in target_procs:
@@ -437,61 +504,23 @@ async def run_multiplexer(
                             method, msg.get("params", {})
                         )
                 elif method is not None:
-                    # Request
+                    # Client request
                     id = cast(ReqId, id)
                     log_message("-->", msg, method)
                     params = msg.get("params", {})
-                    # Track shutdown requests.  Breaks abstraction,
-                    # but not that bad.
-                    if method == "shutdown":
-                        shutting_down = True
-                    # Determine which servers to route to or get direct response
-                    result = await logic.on_client_request(
-                        method, params, [proc.server for proc in procs]
+
+                    # Track ALL requests immediately (even DirectResponse ones)
+                    # This allows $/cancelRequest to work uniformly
+                    inflight_requests[id] = (
+                        method,
+                        cast(JSON, params),
+                        set(),  # Will be updated by handler if forwarded to servers
                     )
 
-                    # Check if we should respond immediately without forwarding
-                    if isinstance(result, DirectResponse):
-                        await _respond_to_client(
-                            id,
-                            {
-                                "error"
-                                if result.is_error
-                                else "result": result.payload,
-                            },
-                            method,
-                        )
-                        continue
-
-                    # Otherwise, forward to selected servers
-                    target_servers = result
-                    for t in target_servers:
-                        logic.process_request(method, params, t)
-                    target_procs = cast(
-                        list[InferiorProcess],
-                        [s.cookie for s in target_servers],
+                    # Spawn request handling as task to avoid blocking
+                    asyncio.create_task(
+                        handle_client_request(id, method, params)
                     )
-                    if target_procs:
-                        # Send to selected servers
-                        for p in target_procs:
-                            await write_lsp_message(p.stdin, msg)
-                            log_message(f"[{p.name}] -->", msg, method)
-
-                        inflight_requests[id] = (
-                            method,
-                            cast(JSON, params),
-                            set(target_procs),
-                        )
-                    else:
-                        # respond with rass error
-                        await _respond_to_client(
-                            id,
-                            {
-                                "error": f"[rass] no servers to handle "
-                                f"method='{method}' with params='{params}'!",
-                            },
-                            method,
-                        )
                 else:
                     # Response from client
                     id = cast(ReqId, id)
@@ -508,7 +537,9 @@ async def run_multiplexer(
                         log_message("r->", msg, req_method)
 
                         # Resolve the future
-                        future.set_result((is_error, cast(JSON, response_payload)))
+                        future.set_result(
+                            (is_error, cast(JSON, response_payload))
+                        )
 
                     elif info := server_request_mapping.get(id):
                         # This is a response to a server request - remap ID and route to correct server

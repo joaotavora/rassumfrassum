@@ -122,7 +122,7 @@ class LspLogic:
                 # Happier case: respond immediately with stashed payload
                 return DirectResponse(payload=payload)
             else:
-                # Oops!
+                # Oops!  This will be an error to the client
                 return []
 
         # initialize goes to all servers
