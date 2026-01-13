@@ -203,6 +203,7 @@ async def run_multiplexer(
             await send()
 
     async def _respond_to_client(id: ReqId, response: JSON, method: str):
+        inflight_requests.pop(id, None)
         response["id"] = id
         response["jsonrpc"] = "2.0"
         await _send_to_client(response, method)

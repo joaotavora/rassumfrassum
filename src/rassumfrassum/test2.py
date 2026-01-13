@@ -241,7 +241,8 @@ async def _run_toy_server_async(
     version: str,
     capabilities: JSON,
     request_handlers: 'dict[str, Callable[[int, JSON | None], JSON | None]]',
-    notification_handlers: 'dict[str, Callable[[JSON | None], None]]'
+    notification_handlers: 'dict[str, Callable[[JSON | None], None]]',
+    raw_request_handlers: 'dict[str, Callable[[int, JSON | None, Callable[[JSON], None]], None]]'
 ) -> None:
     """Internal async implementation of toy LSP server."""
     loop = asyncio.get_event_loop()
@@ -287,7 +288,13 @@ async def _run_toy_server_async(
 
             # Handle requests (messages with id)
             if msg_id is not None and method:
-                if method in request_handlers:
+                if method in raw_request_handlers:
+                    # Raw handler - it will send messages itself
+                    handler = raw_request_handlers[method]
+                    def send_msg(msg: JSON):
+                        write_message_sync(msg)
+                    handler(msg_id, params, send_msg)
+                elif method in request_handlers:
                     handler = request_handlers[method]
 
                     # Check if handler is async
@@ -353,7 +360,8 @@ def run_toy_server(
     version: str = '1.0.0',
     capabilities: JSON | None = None,
     request_handlers: 'dict[str, Callable[[int, JSON | None], JSON | None]] | None' = None,
-    notification_handlers: 'dict[str, Callable[[JSON | None], None]] | None' = None
+    notification_handlers: 'dict[str, Callable[[JSON | None], None]] | None' = None,
+    raw_request_handlers: 'dict[str, Callable[[int, JSON | None, Callable[[JSON], None]], None]] | None' = None
 ) -> None:
     """
     Run a toy LSP server for testing.
@@ -365,6 +373,10 @@ def run_toy_server(
         request_handlers: Dict mapping method names to (msg_id, params) -> result handlers.
                          Handlers can be sync or async functions. Async handlers are spawned as tasks.
         notification_handlers: Dict mapping method names to (params) -> None handlers
+        raw_request_handlers: Dict mapping method names to (msg_id, params, send_message) handlers.
+                              Use sparingly. These handlers get a send_message(msg: JSON) callback
+                              for sending arbitrary JSONRPC messages (e.g., duplicate responses).
+                              The handler must send the response(s) manually.
     """
     # Default minimal capabilities
     if capabilities is None:
@@ -394,5 +406,8 @@ def run_toy_server(
     if notification_handlers is None:
         notification_handlers = {}
 
+    if raw_request_handlers is None:
+        raw_request_handlers = {}
+
     # Run the async implementation
-    asyncio.run(_run_toy_server_async(name, version, capabilities, request_handlers, notification_handlers))
+    asyncio.run(_run_toy_server_async(name, version, capabilities, request_handlers, notification_handlers, raw_request_handlers))
