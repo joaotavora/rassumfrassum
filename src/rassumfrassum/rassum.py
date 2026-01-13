@@ -1,6 +1,7 @@
 """
 rassumfrassum - A simple LSP multiplexer that forwards JSONRPC messages.
 """
+
 import argparse
 import asyncio
 import importlib
@@ -17,7 +18,7 @@ from .json import (
 )
 from .json import (
     read_message as read_lsp_message,
-) 
+)
 from .json import (
     write_message as write_lsp_message,
 )
@@ -64,7 +65,7 @@ class AggregationState:
     """State for tracking an ongoing message aggregation."""
 
     outstanding: set[InferiorProcess]
-    id: Optional[ReqId]
+    id: ReqId
     method: str
     aggregate: dict[int, PayloadItem]
     dispatched: bool | str = False
@@ -201,6 +202,11 @@ async def run_multiplexer(
         else:
             await send()
 
+    async def _respond_to_client(id: ReqId, response: JSON, method: str):
+        response["id"] = id
+        response["jsonrpc"] = "2.0"
+        await _send_to_client(response, method)
+
     async def notify_client(method: str, payload: JSON):
         """Send a notification to the client (for use by logic layer)."""
         if shutting_down:
@@ -289,29 +295,18 @@ async def run_multiplexer(
     )
 
     def _reconstruct(ag: AggregationState) -> JSON:
-        """Reconstruct full JSONRPC message from aggregation state."""
+        """Reconstruct payload part of response from aggregation state."""
 
         payload, is_error = logic.process_responses(
             ag.method, list(ag.aggregate.values())
         )
 
-        if ag.id is not None:
-            # Response
-            return {
-                "jsonrpc": "2.0",
-                "id": ag.id,
-                "error" if is_error else "result": payload,
-            }
-        else:
-            # Notification
-            return {
-                "jsonrpc": "2.0",
-                "method": ag.method,
-                "params": payload,
-            }
+        return {
+            "error" if is_error else "result": payload,
+        }
 
     def _start_aggregation(item, req_id, method, responders):
-        """Start a new aggregation with the first message."""
+        """Start a new aggregation with the first response."""
         proc = cast(InferiorProcess, item.server.cookie)
         outstanding = responders.copy()
         outstanding.discard(proc)
@@ -322,7 +317,7 @@ async def run_multiplexer(
             )
             log(f"Timeout for aggregation for {method} ({id(state)})!")
             state.dispatched = "timed-out"
-            await _send_to_client(_reconstruct(state), method)
+            await _respond_to_client(ag.id, _reconstruct(state), method)
 
         ag = AggregationState(
             outstanding=outstanding,
@@ -362,13 +357,10 @@ async def run_multiplexer(
             if ag.timeout_task:
                 ag.timeout_task.cancel()
 
-            # Send aggregated result to client
-            await _send_to_client(_reconstruct(ag), method)
+            # Send aggregated result to client (though check if hasn't
+            # been cancelled first)
+            await _respond_to_client(ag.id, _reconstruct(ag), method)
             ag.dispatched = True
-
-            # Remove from requests needing aggregation if it's a response
-            if ag.id is not None:
-                inflight_requests.pop(ag.id, None)
 
     async def handle_client_messages():
         """Read from client and route to appropriate servers."""
@@ -385,11 +377,27 @@ async def run_multiplexer(
                 if id is None and method is not None:
                     # Notification
                     log_message("-->", msg, method)
-                    await logic.on_client_notification(
-                        method, msg.get("params", {})
-                    )
+                    # Intercept '$/cancelRequest' and don't let the
+                    # LspLogic decide this one
+                    if method == "$/cancelRequest":
+                        cancelled_id = msg.get("params", {}).get("id")
+                        probe = inflight_requests.get(cancelled_id)
+                        if probe:
+                            # Prevents responses to the cancelled
+                            # request from making it to the client...
+                            _, _,target_procs = inflight_requests.pop(cancelled_id)
+                            # ...but still forward $/cancelRequest to
+                            # servers that got the request, of course.
+                            for p in target_procs:
+                                await write_lsp_message(p.stdin, msg)
+                                log_message(f"[{p.name}] -->", msg, method)
+                    else:
+                        await logic.on_client_notification(
+                            method, msg.get("params", {})
+                        )
                 elif method is not None:
                     # Request
+                    id = cast(ReqId, id)
                     log_message("-->", msg, method)
                     params = msg.get("params", {})
                     # Track shutdown requests.  Breaks abstraction,
@@ -403,14 +411,15 @@ async def run_multiplexer(
 
                     # Check if we should respond immediately without forwarding
                     if isinstance(result, DirectResponse):
-                        response_msg = {
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "error"
-                            if result.is_error
-                            else "result": result.payload,
-                        }
-                        await _send_to_client(response_msg, method)
+                        await _respond_to_client(
+                            id,
+                            {
+                                "error"
+                                if result.is_error
+                                else "result": result.payload,
+                            },
+                            method,
+                        )
                         continue
 
                     # Otherwise, forward to selected servers
@@ -427,17 +436,16 @@ async def run_multiplexer(
                             await write_lsp_message(p.stdin, msg)
                             log_message(f"[{p.name}] -->", msg, method)
 
-                        inflight_requests[cast(ReqId, id)] = (
+                        inflight_requests[id] = (
                             method,
                             cast(JSON, params),
                             set(target_procs),
                         )
                     else:
                         # respond with rass error
-                        await _send_to_client(
+                        await _respond_to_client(
+                            id,
                             {
-                                "jsonrpc": "2.0",
-                                "id": id,
                                 "error": f"[rass] no servers to handle "
                                 f"method='{method}' with params='{params}'!",
                             },
@@ -561,7 +569,7 @@ async def run_multiplexer(
                     # Client-originated-request, do forwarding/aggregation
                     request_info = inflight_requests.get(req_id)
                     if not request_info:
-                        log(f"Dropping response to unknown {req_id}")
+                        log(f"Dropping response to unknown/cancelled {req_id}")
                         continue
                     method, req_params, responders = request_info
                     is_error = "error" in msg
@@ -584,7 +592,7 @@ async def run_multiplexer(
                     # original request targeted only one server.
                     if len(responders) == 1:
                         logic.process_responses(method, [item])
-                        await _send_to_client(msg, method)
+                        await _respond_to_client(req_id, msg, method)
                         continue
 
                     # Response aggregation

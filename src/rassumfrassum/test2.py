@@ -78,6 +78,25 @@ class LspTestEndpoint:
         msg = {'jsonrpc': '2.0', 'id': req_id, 'result': result}
         await write_message(self.writer, msg)
 
+    async def read_message(self, timeout_sec: float = 5.0) -> JSON:
+        """
+        Read a single JSONRPC message with timeout.
+
+        Use sparingly - prefer the specific read_notification(), read_response(),
+        or read_request() methods when you know what you're expecting.
+        This is useful when you need to verify what message arrives (or doesn't)
+        without filtering.
+
+        Raises asyncio.TimeoutError if no message arrives within timeout.
+        """
+        msg = await asyncio.wait_for(
+            read_message(self.reader),
+            timeout=timeout_sec
+        )
+        if not msg:
+            raise EOFError("EOF while waiting for message")
+        return msg
+
     async def read_notification(self, method: str) -> JSON:
         """Read messages until we get a notification with the given method."""
         while True:
