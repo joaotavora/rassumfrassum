@@ -70,6 +70,7 @@ class LspLogic:
         self,
         servers: list[Server],
         notify_client: Callable[[str, JSON], Awaitable[None]],
+        request_client: Callable[[str, JSON], Awaitable[tuple[bool, JSON]]],
         request_server: Callable[
             [Server, str, JSON], Awaitable[tuple[bool, JSON]]
         ],
@@ -79,6 +80,7 @@ class LspLogic:
         """Initialize with all servers, notification and request senders, and options."""
         self.primary = servers[0]
         self.notify_client = notify_client
+        self.request_client = request_client
         self.request_server = request_server
         self.notify_server = notify_server
         self.opts = opts

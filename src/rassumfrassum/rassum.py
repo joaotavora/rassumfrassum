@@ -172,6 +172,12 @@ async def run_multiplexer(
     ] = {}
     next_rass_request_id = 0
 
+    # Track rass-originated requests to client
+    # rass_request_id -> (method, params, future)
+    rass_client_request_mapping: dict[
+        ReqId, tuple[str, JSON, asyncio.Future]
+    ] = {}
+
     # Track shutdown state
     shutting_down = False
 
@@ -219,6 +225,47 @@ async def run_multiplexer(
             "params": payload,
         }
         await _send_to_client(message, method)
+
+    async def request_client(method: str, payload: JSON) -> tuple[bool, JSON]:
+        """
+        Send a request to the client and wait for response (for use by logic layer).
+
+        Returns:
+            tuple of (is_error, response_payload)
+        """
+        nonlocal next_rass_request_id
+
+        if shutting_down:
+            debug(f"Skipping request to client (shutting down): {method}")
+            return (True, {"message": "Shutting down"})
+
+        # Allocate a unique string request ID
+        rass_req_id = f"rass{next_rass_request_id}"
+        next_rass_request_id += 1
+
+        # Create a future to wait for the response
+        future: asyncio.Future[tuple[bool, JSON]] = asyncio.Future()
+
+        # Track this request
+        rass_client_request_mapping[rass_req_id] = (method, payload, future)
+
+        # Send the request to the client
+        message = {
+            "jsonrpc": "2.0",
+            "id": rass_req_id,
+            "method": method,
+            "params": payload,
+        }
+        await _send_to_client(message, method)
+        log_message("r->", message, method)
+
+        # Wait for the response
+        try:
+            is_error, response_payload = await future
+            return (is_error, response_payload)
+        except Exception as e:
+            debug(f"Error waiting for response from client: {e}")
+            return (True, {"message": str(e)})
 
     async def request_server(
         server: Server, method: str, payload: JSON
@@ -290,6 +337,7 @@ async def run_multiplexer(
     logic = logic_class(
         [p.server for p in procs],
         notify_client,
+        request_client,
         request_server,
         notify_server,
         opts,
@@ -453,9 +501,24 @@ async def run_multiplexer(
                             method,
                         )
                 else:
-                    # Response from client (to a server request)
+                    # Response from client
                     id = cast(ReqId, id)
-                    if info := server_request_mapping.get(id):
+                    if info := rass_client_request_mapping.get(id):
+                        # This is a response to a rass-originated request to client
+                        req_method, req_params, future = info
+                        del rass_client_request_mapping[id]
+
+                        # Extract the response
+                        is_error = "error" in msg
+                        response_payload = (
+                            msg.get("error") if is_error else msg.get("result")
+                        )
+                        log_message("<--", msg, req_method)
+
+                        # Resolve the future
+                        future.set_result((is_error, cast(JSON, response_payload)))
+
+                    elif info := server_request_mapping.get(id):
                         # This is a response to a server request - remap ID and route to correct server
                         original_id, target_proc, req_method, req_params = info
                         del server_request_mapping[id]
