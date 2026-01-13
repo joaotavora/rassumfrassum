@@ -257,15 +257,11 @@ async def run_multiplexer(
             "params": payload,
         }
         await _send_to_client(message, method)
-        log_message("r->", message, method)
+        log_message("<-r", message, method)
 
         # Wait for the response
-        try:
-            is_error, response_payload = await future
-            return (is_error, response_payload)
-        except Exception as e:
-            debug(f"Error waiting for response from client: {e}")
-            return (True, {"message": str(e)})
+        is_error, response_payload = await future
+        return (is_error, response_payload)
 
     async def request_server(
         server: Server, method: str, payload: JSON
@@ -306,12 +302,8 @@ async def run_multiplexer(
         log_message(f"[{proc.name}] r->", message, method)
 
         # Wait for the response
-        try:
-            is_error, response_payload = await future
-            return (is_error, response_payload)
-        except Exception as e:
-            debug(f"Error waiting for response from {proc.name}: {e}")
-            return (True, {"message": str(e)})
+        is_error, response_payload = await future
+        return (is_error, response_payload)
 
     async def notify_server(server: Server, method: str, payload: JSON) -> None:
         """
@@ -513,7 +505,7 @@ async def run_multiplexer(
                         response_payload = (
                             msg.get("error") if is_error else msg.get("result")
                         )
-                        log_message("<--", msg, req_method)
+                        log_message("r->", msg, req_method)
 
                         # Resolve the future
                         future.set_result((is_error, cast(JSON, response_payload)))
@@ -626,8 +618,7 @@ async def run_multiplexer(
                         log_message(f"[{proc.name}] <-r", msg, rass_method)
 
                         # Resolve the future
-                        if not future.done():
-                            future.set_result((is_error, cast(JSON, payload)))
+                        future.set_result((is_error, cast(JSON, payload)))
                         continue
 
                     # Client-originated-request, do forwarding/aggregation
