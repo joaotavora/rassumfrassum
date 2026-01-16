@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test client for too-late diagnostics scenario.
 s1's diagnostics arrive after the timeout and should be discarded.

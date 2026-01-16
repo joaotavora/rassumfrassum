@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test that didChange on one file doesn't clear diagnostics for other files.
 

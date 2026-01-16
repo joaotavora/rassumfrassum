@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test that textDocument/codeAction aggregates results from all servers
 with codeActionProvider capability.
