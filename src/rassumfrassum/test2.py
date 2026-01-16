@@ -9,6 +9,7 @@ import sys
 from typing import Callable, cast
 
 from .json import JSON, read_message, write_message, read_message_sync, write_message_sync
+from .stdio import create_stdin_reader, create_stdout_writer
 
 def log(who: str, msg: str) -> None:
     """Log to stderr."""
@@ -42,19 +43,8 @@ class LspTestEndpoint:
     @staticmethod
     async def create(name : str = "client") -> 'LspTestEndpoint':
         """Create an LSP test endpoint connected to stdin/stdout."""
-        loop = asyncio.get_event_loop()
-
-        # Setup async stdin
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
-        # Setup async stdout
-        w_transport, w_protocol = await loop.connect_write_pipe(
-            asyncio.streams.FlowControlMixin, sys.stdout
-        )
-        writer = asyncio.StreamWriter(w_transport, w_protocol, reader, loop)
-
+        reader = await create_stdin_reader()
+        writer = await create_stdout_writer()
         return LspTestEndpoint(reader=reader, writer=writer, name=name)
 
     async def notify(self, method: str, params: JSON) -> None:
