@@ -189,8 +189,8 @@ async def run_multiplexer(
         log(f"Delaying server responses by {opts.delay_ms}ms")
 
     # Get client streams
-    client_reader = await create_stdin_reader(opts.threaded_stdio)
-    client_writer = await create_stdout_writer(opts.threaded_stdio)
+    client_reader = await create_stdin_reader()
+    client_writer = await create_stdout_writer()
 
     async def _send_to_client(message: JSON, method: str, direction="<--"):
         """Send a message to the client, with optional delay."""
