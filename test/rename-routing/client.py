@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test that textDocument/rename routes to the first server with renameProvider.
 """

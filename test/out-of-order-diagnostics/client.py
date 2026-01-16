@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test client for out-of-order diagnostic versions.
 Verifies that stale diagnostics are dropped.

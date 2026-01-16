@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test that textDocumentSync=1 (Full) wins over textDocumentSync=2 (Incremental).
 Even if the primary server reports Incremental, if any secondary server reports

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Server that can delay its initialize response.
 Used to test tardy request response dropping.

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test client for tardy-initialize-response test.
 Verifies that tardy initialize responses are dropped.

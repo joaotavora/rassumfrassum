@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """Server for too-late-diagnostics-from-s1 test"""
 
 import argparse

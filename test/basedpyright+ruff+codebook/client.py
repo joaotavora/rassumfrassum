@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test client for basedpyright + ruff + codebook servers.
 Tests three-server diagnostic aggregation with tardy updates using async.

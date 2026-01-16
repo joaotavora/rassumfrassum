@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Test client for basedpyright + ty servers.
 Tests multi-server completion support.

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Server that sends out-of-order diagnostics to test version staleness detection.
 After sending v2 diagnostics, s1 will send a stale v1 diagnostic.
