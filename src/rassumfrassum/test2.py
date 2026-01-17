@@ -205,7 +205,7 @@ class LspTestEndpoint:
         return msg
 
     async def shutdown(self) -> None:
-        """Send shutdown request and exit notification."""
+        """Send shutdown request and exit notification, then clean up."""
         log(self.name, "Sending shutdown")
         req_id = await self.request('shutdown')
         await self.read_response(req_id)
