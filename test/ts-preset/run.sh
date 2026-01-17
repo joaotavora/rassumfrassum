@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
-set -o pipefail
 cd $(dirname "$0")
-
-export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH}"
 
 # Check if required LSP servers are available
 if ! command -v eslint-language-server >/dev/null 2>&1; then
@@ -22,8 +19,4 @@ fi
     exit 77
 }
 
-FIFO=$(mktemp -u)
-mkfifo "$FIFO"
-trap "rm -f '$FIFO'" EXIT INT TERM
-
-./client.py < "$FIFO" | python3 -m rassumfrassum ts > "$FIFO"
+../yoyo.sh ./client.py --rass-- ts

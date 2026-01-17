@@ -1,21 +1,13 @@
 #!/bin/bash
-set -o pipefail
 cd $(dirname "$0")
 
-
-export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH}"
 # Server s2 will crash after initialization
 # We expect rass to exit with error code 1
 
-FIFO=$(mktemp -u)
-mkfifo "$FIFO"
-trap "rm -f '$FIFO'" EXIT INT TERM
-
 set +e
-./client.py < "$FIFO" | python3 -m rassumfrassum \
-         -- python ./server.py --name s1 \
-         -- python ./server.py --name s2 --crash-after-init \
-> "$FIFO"
+../yoyo.sh ./client.py --rass-- \
+    -- python ./server.py --name s1 \
+    -- python ./server.py --name s2 --crash-after-init
 EXIT_CODE=$?
 set -e
 

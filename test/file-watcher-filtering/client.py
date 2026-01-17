@@ -94,7 +94,7 @@ async def main():
 
     log("client", "SUCCESS: No spurious diagnostics for main.py")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

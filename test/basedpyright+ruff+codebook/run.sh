@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
-set -o pipefail
 cd $(dirname "$0")
-
-export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH}"
 
 # Check if required LSP servers are available
 if ! command -v basedpyright-langserver >/dev/null 2>&1 || \
@@ -13,12 +10,7 @@ if ! command -v basedpyright-langserver >/dev/null 2>&1 || \
     exit 77
 fi
 
-FIFO=$(mktemp -u)
-mkfifo "$FIFO"
-trap "rm -f '$FIFO'" EXIT INT TERM
-
-./client.py < "$FIFO" | python3 -m rassumfrassum \
-         -- basedpyright-langserver --stdio \
-         -- ruff server \
-         -- codebook-lsp serve \
-> "$FIFO"
+../yoyo.sh ./client.py --rass-- \
+    -- basedpyright-langserver --stdio \
+    -- ruff server \
+    -- codebook-lsp serve

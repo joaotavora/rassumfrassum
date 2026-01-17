@@ -34,7 +34,7 @@ async def main():
 
     log("client", f"Got diagnostics only from s2 (s1 timed out)")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

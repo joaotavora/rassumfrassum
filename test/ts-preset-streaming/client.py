@@ -104,7 +104,7 @@ async def main():
     log(client.name, "OK! Got diagnostics from both servers in streaming mode!")
 
     # Shutdown
-    await client.shutdown()
+    await client.byebye()
 
 
 if __name__ == '__main__':

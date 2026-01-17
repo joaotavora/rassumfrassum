@@ -55,7 +55,7 @@ async def main():
     await client.assert_no_message_pending(timeout_sec=1.5)
     log("client", "Stale v1 diagnostic was correctly dropped!")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

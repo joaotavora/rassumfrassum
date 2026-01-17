@@ -47,7 +47,7 @@ async def main():
 
     log("client", "✓ Code actions correctly aggregated from servers with codeActionProvider")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -1,24 +1,16 @@
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")"
-
-export PYTHONPATH="$(cd ../.. && pwd)/src:${PYTHONPATH:-}"
+#!/bin/bash
+set -e
+cd $(dirname "$0")
 
 # Check if required servers are available
-if ! command -v basedpyright-langserver &> /dev/null || \
-   ! command -v ruff &> /dev/null || \
-   ! command -v codebook-lsp &> /dev/null; then
+if ! command -v basedpyright-langserver >/dev/null 2>&1 || \
+   ! command -v ruff >/dev/null 2>&1 || \
+   ! command -v codebook-lsp >/dev/null 2>&1; then
     echo "Required LSP servers not found, skipping test" >&2
     exit 77
 fi
 
-FIFO=$(mktemp -u)
-mkfifo "$FIFO"
-trap "rm -f '$FIFO'" EXIT INT TERM
-
-chmod +x client.py
-./client.py < "$FIFO" | python3 -m rassumfrassum \
+../yoyo.sh ./client.py --rass-- \
     -- basedpyright-langserver --stdio \
     -- ruff server \
-    -- codebook-lsp serve \
-> "$FIFO"
+    -- codebook-lsp serve

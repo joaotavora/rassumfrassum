@@ -68,7 +68,7 @@ async def main():
     else:
         log("client", f"SUCCESS: Took {elapsed:.2f}s - responses handled in parallel as expected")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

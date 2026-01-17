@@ -103,7 +103,7 @@ async def main():
     # brittle, since order could be changed...
     assert [s['source'] for s in a_after] == [s['source'] for s in a_before]
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -88,7 +88,7 @@ bar(42);  # Type error: passing int to str
         assert sources.get('Codebook', 0) == 1, f"Expected 1 Codebook diagnostic for {uri}"
         assert sources.get('basedpyright', 0) == 2, f"Expected 2 basedpyright diagnostics for {uri}"
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

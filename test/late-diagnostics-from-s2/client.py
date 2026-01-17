@@ -33,7 +33,7 @@ async def main():
 
     log("client", f"Got aggregated diagnostics from both servers")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -45,7 +45,7 @@ async def main():
         f"Expected 'result' or 'error' in hover response: {hover_response}"
     log("client", f"Got hover response {hover_response}")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

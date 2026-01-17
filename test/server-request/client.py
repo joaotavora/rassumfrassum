@@ -30,7 +30,7 @@ async def main():
         _msg = await client.read_notification('custom/requestResponseOk')
         log("client", f"Got success notification {i+1}")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

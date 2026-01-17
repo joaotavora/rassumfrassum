@@ -32,7 +32,7 @@ async def main():
 
     log("client", "SUCCESS: Received correct response from rass-originated request")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -113,7 +113,7 @@ async def main():
     log(client.name, "OK! Got diagnostics from both ESLint and TypeScript!")
 
     # Shutdown
-    await client.shutdown()
+    await client.byebye()
 
 
 if __name__ == '__main__':

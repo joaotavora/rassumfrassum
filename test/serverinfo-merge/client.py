@@ -39,7 +39,7 @@ async def main():
 
     log("client", "Got initialize response with correct merged serverInfo")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

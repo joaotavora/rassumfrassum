@@ -28,7 +28,7 @@ async def main():
 
     log("client", "✓ textDocumentSync=1 correctly won over textDocumentSync=2")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -21,7 +21,7 @@ async def main():
     assert capabilities, "Expected capabilities in initialize response"
 
     # Shutdown
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

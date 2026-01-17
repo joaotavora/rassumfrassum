@@ -204,8 +204,8 @@ class LspTestEndpoint:
 
         return msg
 
-    async def shutdown(self) -> None:
-        """Send shutdown request and exit notification."""
+    async def byebye(self) -> None:
+        """Send shutdown request and exit notification, then exit the program."""
         log(self.name, "Sending shutdown")
         req_id = await self.request('shutdown')
         await self.read_response(req_id)
@@ -213,6 +213,15 @@ class LspTestEndpoint:
 
         await self.notify('exit', {})
         log(self.name, "done!")
+
+        # FIXME: The Windows-specific stdio machinery in stdio.py is
+        # fragile and deadlocks during normal asyncio cleanup. Don't
+        # have time to debug it.  Force exit on Windows, clean exit
+        # elsewhere.
+        if os.getenv('WINDOWS_KLUDGE'):
+            os._exit(0)
+        else:
+            sys.exit(0)
 
     async def assert_no_message_pending(self, timeout_sec: float) -> None:
         """Assert that no message arrives within the given timeout."""

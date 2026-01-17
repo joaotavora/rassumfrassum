@@ -30,7 +30,7 @@ async def main():
     await client.assert_no_message_pending(timeout_sec=0.1)
     log("client", "Tardy initialize response was correctly dropped!")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

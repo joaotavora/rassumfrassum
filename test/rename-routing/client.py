@@ -44,7 +44,7 @@ async def main():
 
     log("client", "✓ Rename correctly routed to first server with renameProvider (s2)")
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

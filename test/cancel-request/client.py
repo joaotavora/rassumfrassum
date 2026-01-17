@@ -66,7 +66,7 @@ async def main():
         log("client", "Cancelled request response was correctly blocked!")
         pass
 
-    await client.shutdown()
+    await client.byebye()
 
 if __name__ == '__main__':
     asyncio.run(main())

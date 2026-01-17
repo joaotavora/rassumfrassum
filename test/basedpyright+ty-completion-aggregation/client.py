@@ -117,7 +117,7 @@ async def main():
     # irrelevant completions, but in the same environment with a real
     # client it responds with just one completion. Investigate this.
 
-    await client.shutdown()
+    await client.byebye()
 
 
 if __name__ == '__main__':
