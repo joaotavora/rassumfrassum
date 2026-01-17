@@ -238,16 +238,9 @@ async def _run_toy_server_async(
     """Internal async implementation of toy LSP server."""
     loop = asyncio.get_event_loop()
 
-    # Setup async stdin
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
-    # Setup async stdout
-    w_transport, w_protocol = await loop.connect_write_pipe(
-        asyncio.streams.FlowControlMixin, sys.stdout
-    )
-    writer = asyncio.StreamWriter(w_transport, w_protocol, reader, loop)
+    # Setup async stdin/stdout using cross-platform functions
+    reader = await create_stdin_reader()
+    writer = await create_stdout_writer()
 
     log(name, "Started!")
 

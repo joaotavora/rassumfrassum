@@ -121,12 +121,6 @@ def main(argv=None) -> None:
         metavar='N',
         help='Maximum log message length in bytes; 0 for unlimited (default: 4000).',
     )
-    parser.add_argument(
-        '--threaded-stdio',
-        action='store_true',
-        default=sys.platform.startswith('win'),
-        help='Use threaded stdio bridge (default: True on Windows, False otherwise).',
-    )
     opts = parser.parse_args(rass_args)
 
     # Set log level based on argument

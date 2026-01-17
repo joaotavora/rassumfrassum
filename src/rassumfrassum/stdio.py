@@ -1,99 +1,108 @@
-"""Asyncio-compatible stdin/stdout streams that work on Windows.
+"""Cross-platform asyncio-compatible stdin/stdout.
 
-On Windows, ProactorEventLoop cannot use
-connect_read_pipe/connect_write_pipe with sys.stdin/stdout because
-they aren't opened with the OVERLAPPED flag required for IOCP. Or
-something, like that.  This is a longstanding CPython thing:
-
-https://github.com/python/cpython/issues/71019
-
-This module provides a threaded workaround that bridges blocking stdio
-to async pipes.
+On Windows, this is unfortunately more complicated
 """
 
 import asyncio
-import os
+import platform
+import socket
 import sys
 import threading
-from typing import Tuple
 
 
-async def create_stdin_reader(use_thread: bool) -> asyncio.StreamReader:
-    """
-    Create an asyncio StreamReader for stdin.
+async def create_stdin_reader() -> asyncio.StreamReader:
+    """Create an asyncio StreamReader for stdin.
 
-    Uses a background thread to bridge blocking stdin to an async pipe on Windows.
+    On Windows: Uses run_in_executor with blocking reads.
+    On Unix: Direct connection to sys.stdin.
     """
     loop = asyncio.get_event_loop()
-
-    if use_thread:
-        # A thread reads blockingly from stdin and writes to the
-        # write-end of a pipe.  The read-end of a pipe is passed to
-        # connect_read_pipe.
-        read_fd, write_fd = os.pipe()
-
-        def helper():
-            pipe_write = os.fdopen(write_fd, 'wb', buffering=0)
-            try:
-                stdin_fd = sys.stdin.fileno()
-                while True:
-                    data = os.read(stdin_fd, 4096)
-                    if not data:
-                        break
-                    pipe_write.write(data)
-            finally:
-                pipe_write.close()
-
-        threading.Thread(target=helper, daemon=True, name="stdin-reader").start()
-
-        # Open the read_fd as a file object for connect_read_pipe
-        read_file = os.fdopen(read_fd, 'rb', buffering=0)
-    else:
-        # Direct approach (Linux/macOS): connect directly to sys.stdin
-        read_file = sys.stdin
-
     reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, read_file)
-    return reader
+
+    if platform.system() == 'Windows':
+        # Windows: Use run_in_executor to avoid pipe issues
+        async def read_stdin_loop():
+            def blocking_read1():
+                """Blocking read1 from stdin buffer - reads available data."""
+                try:
+                    # read1() reads whatever is available, doesn't block for full buffer
+                    return sys.stdin.buffer.read1(4096)
+                except Exception:
+                    return b''
+
+            try:
+                while True:
+                    chunk = await loop.run_in_executor(None, blocking_read1)
+                    if not chunk:
+                        break
+                    reader.feed_data(chunk)
+                reader.feed_eof()
+            except Exception:
+                reader.feed_eof()
+
+        # Start the reading task in the background
+        asyncio.create_task(read_stdin_loop())
+        return reader
+    else:
+        # Unix: Direct connection works fine
+        protocol = asyncio.StreamReaderProtocol(reader)
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+        return reader
 
 
-async def create_stdout_writer(use_thread: bool) -> asyncio.StreamWriter:
-    """
-    Create an asyncio StreamWriter for stdout.
+class _WindowsStdoutWriter:
+    """A StreamWriter-like wrapper for Windows stdout using run_in_executor."""
 
-    Uses a background thread to bridge an async pipe to blocking stdout on Windows.
+    def __init__(self, loop):
+        self._loop = loop
+        self._buffer = bytearray()
+
+    def write(self, data):
+        """Add data to the buffer."""
+        self._buffer.extend(data)
+
+    async def drain(self):
+        """Flush the buffer to stdout using run_in_executor."""
+        if not self._buffer:
+            return
+
+        data = bytes(self._buffer)
+        self._buffer.clear()
+
+        def blocking_write(data):
+            """Blocking write to stdout buffer - runs in thread pool."""
+            try:
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            except Exception:
+                pass
+
+        await self._loop.run_in_executor(None, blocking_write, data)
+
+    def close(self):
+        """Close the writer."""
+        pass
+
+    async def wait_closed(self):
+        """Wait for close to complete."""
+        pass
+
+
+async def create_stdout_writer() -> asyncio.StreamWriter:
+    """Create an asyncio StreamWriter for stdout.
+
+    On Windows: Uses run_in_executor with blocking writes.
+    On Unix: Direct connection to sys.stdout.
     """
     loop = asyncio.get_event_loop()
 
-    if use_thread:
-        # A thread reads blockingly from the read end of a pipe and
-        # writes to stdout.  The write end of a pipe is passed to
-        # connect_write_pipe.
-        read_fd, write_fd = os.pipe()
-
-        def helper():
-            pipe_read = os.fdopen(read_fd, 'rb', buffering=0)
-            try:
-                while True:
-                    data = pipe_read.read(4096)
-                    if not data:
-                        break
-                    sys.stdout.buffer.write(data)
-                    sys.stdout.buffer.flush()
-            finally:
-                pipe_read.close()
-
-        threading.Thread(target=helper, daemon=True, name="stdout-writer").start()
-
-        # Create asyncio writer from the write end of the pipe
-        write_file = os.fdopen(write_fd, 'wb', buffering=0)
+    if platform.system() == 'Windows':
+        # Windows: Use custom wrapper with run_in_executor
+        return _WindowsStdoutWriter(loop)
     else:
-        # Direct approach (Linux/macOS): connect directly to sys.stdout
-        write_file = sys.stdout
-
-    transport, protocol = await loop.connect_write_pipe(
-        asyncio.streams.FlowControlMixin, write_file
-    )
-    writer = asyncio.StreamWriter(transport, protocol, None, loop)
-    return writer
+        # Unix: Direct connection works fine
+        transport, protocol = await loop.connect_write_pipe(
+            asyncio.streams.FlowControlMixin, sys.stdout
+        )
+        writer = asyncio.StreamWriter(transport, protocol, None, loop)
+        return writer
