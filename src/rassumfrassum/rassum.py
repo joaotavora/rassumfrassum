@@ -13,6 +13,7 @@ from typing import Optional, cast
 
 from .backend import Backend
 from .inferior_process import InferiorProcess
+from .internal_backend import InternalBackend
 from .frassum import DirectResponse, PayloadItem, Server
 from .json import (
     JSON,
@@ -81,6 +82,7 @@ async def run_multiplexer(
         await proc.launch()
         backend = cast(Backend, proc)
         backends.append(backend)
+    backends.append(InternalBackend())
 
     # Create message router using specified logic class
     class_name = opts.logic_class
