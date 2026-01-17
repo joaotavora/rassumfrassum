@@ -403,8 +403,9 @@ async def run_multiplexer(
             await _respond_to_client(ag.id, _reconstruct(ag), method)
             ag.dispatched = True
 
-    async def handle_client_request(req_id: ReqId, method: str, params: JSON):
-        """Handle a single client request (spawned as task to avoid blocking)."""
+    async def handle_client_request(req_id: ReqId, method: str,
+                                    params: JSON | None):
+        """Handle a single client request (spawned task to avoid blocking)."""
         nonlocal shutting_down
 
         # Track shutdown requests
@@ -443,8 +444,9 @@ async def run_multiplexer(
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "method": method,
-                    "params": params,
                 }
+                if params:
+                    msg['params'] = params
                 await write_lsp_message(p.stdin, msg)
                 log_message(f"[{p.name}] -->", msg, method)
 
@@ -507,7 +509,7 @@ async def run_multiplexer(
                     # Client request
                     id = cast(ReqId, id)
                     log_message("-->", msg, method)
-                    params = msg.get("params", {})
+                    params = msg.get("params")
 
                     # Track ALL requests immediately (even DirectResponse ones)
                     # This allows $/cancelRequest to work uniformly
