@@ -6,20 +6,18 @@ import argparse
 import asyncio
 import importlib
 import json
-import os
 import sys
 import traceback
 from dataclasses import dataclass, field
 from typing import Optional, cast
 
+from .backend import Backend
+from .inferior_process import InferiorProcess
+from .internal_backend import InternalBackend
 from .frassum import DirectResponse, PayloadItem, Server
 from .json import (
     JSON,
-)
-from .json import (
     read_message as read_lsp_message,
-)
-from .json import (
     write_message as write_lsp_message,
 )
 from .util import event, log, warn, debug
@@ -29,42 +27,11 @@ from .stdio import create_stdin_reader, create_stdout_writer
 ReqId = str | int
 
 
-class InferiorProcess:
-    """A server subprocess and its associated logical server info."""
-
-    def __init__(self, process, server):
-        self.process = process
-        self.server = server
-
-    def __repr__(self):
-        return f"InferiorProcess({self.name})"
-
-    process: asyncio.subprocess.Process
-    server: Server
-
-    @property
-    def stdin(self) -> asyncio.StreamWriter:
-        return self.process.stdin  # ty:ignore[invalid-return-type]
-
-    @property
-    def stdout(self) -> asyncio.StreamReader:
-        return self.process.stdout  # ty:ignore[invalid-return-type]
-
-    @property
-    def stderr(self) -> asyncio.StreamReader:
-        return self.process.stderr  # ty:ignore[invalid-return-type]
-
-    @property
-    def name(self) -> str:
-        """Convenience property to access server name."""
-        return self.server.name
-
-
 @dataclass
 class AggregationState:
     """State for tracking an ongoing message aggregation."""
 
-    outstanding: set[InferiorProcess]
+    outstanding: set[Backend]
     id: ReqId
     method: str
     aggregate: dict[int, PayloadItem]
@@ -85,43 +52,19 @@ def log_message(direction: str, message: JSON, method: str) -> None:
     event(f"{direction} {prefix} {json.dumps(message, ensure_ascii=False)}")
 
 
-async def forward_server_stderr(proc: InferiorProcess) -> None:
+async def forward_server_stderr(backend: Backend) -> None:
     """
-    Forward server's stderr to our stderr, with appropriate prefixing.
+    Forward backend's errors to our stderr, with appropriate prefixing.
     """
     try:
         while True:
-            line = await proc.stderr.readline()
-            if not line:
+            error = await backend.poll_errors()
+            if not error:
                 break
 
-            # Decode and strip only the trailing newline (preserve other whitespace)
-            line_str = line.decode("utf-8", errors="replace").rstrip("\n\r")
-            log(f"[{proc.name}] {line_str}")
+            log(f"[{backend.name}] {error}")
     except Exception as e:
-        log(f"[{proc.name}] Error reading stderr: {e}")
-
-
-async def launch_server(
-    server_command: list[str], server_index: int
-) -> InferiorProcess:
-    """Launch a single LSP server subprocess."""
-    basename = os.path.basename(server_command[0])
-    # Make name unique by including index for multiple servers
-    name = f"{basename}#{server_index}" if server_index > 0 else basename
-
-    log(f"Launching {name}: {' '.join(server_command)}")
-
-    process = await asyncio.create_subprocess_exec(
-        *server_command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    server = Server(name=name)
-    proc = InferiorProcess(process=process, server=server)
-    server.cookie = proc
-    return proc
+        log(f"[{backend.name}] Error polling errors: {e}")
 
 
 async def run_multiplexer(
@@ -133,10 +76,13 @@ async def run_multiplexer(
 
     """
     # Launch all servers
-    procs: list[InferiorProcess] = []
+    backends: list[Backend] = []
     for i, cmd in enumerate(server_commands):
-        p = await launch_server(cmd, i)
-        procs.append(p)
+        proc = InferiorProcess(cmd, i)
+        await proc.launch()
+        backend = cast(Backend, proc)
+        backends.append(backend)
+    backends.append(InternalBackend())
 
     # Create message router using specified logic class
     class_name = opts.logic_class
@@ -156,19 +102,19 @@ async def run_multiplexer(
     response_aggregations: dict[ReqId, AggregationState] = {}
 
     # Track which request IDs need aggregation: id -> (method, params, responders)
-    inflight_requests: dict[ReqId, tuple[str, JSON, set[InferiorProcess]]] = {}
+    inflight_requests: dict[ReqId, tuple[str, JSON, set[Backends]]] = {}
 
     # Track server requests to remap IDs
     # remapped_id -> (original_server_id, server, method, params)
     server_request_mapping: dict[
-        ReqId, tuple[ReqId, InferiorProcess, str, JSON]
+        ReqId, tuple[ReqId, Backend, str, JSON]
     ] = {}
     next_remapped_id = 0
 
     # Track rass-originated requests to servers
     # rass_request_id -> (server, method, params, future)
     rass_request_mapping: dict[
-        ReqId, tuple[InferiorProcess, str, JSON, asyncio.Future]
+        ReqId, tuple[Backend, str, JSON, asyncio.Future]
     ] = {}
     next_rass_request_id = 0
 
@@ -181,9 +127,9 @@ async def run_multiplexer(
     # Track shutdown state
     shutting_down = False
 
-    log(f"Primary server: {procs[0].name}")
-    if len(procs) > 1:
-        secondaries = [i.name for i in procs[1:]]
+    log(f"Primary server: {backends[0].name}")
+    if len(backends) > 1:
+        secondaries = [i.name for i in backends[1:]]
         log(f"Secondary servers: {', '.join(secondaries)}")
     if opts.delay_ms > 0:
         log(f"Delaying server responses by {opts.delay_ms}ms")
@@ -278,8 +224,8 @@ async def run_multiplexer(
             debug(f"Skipping request to server (shutting down): {method}")
             return (True, {"message": "Shutting down"})
 
-        # Get the proc for this server
-        proc = cast(InferiorProcess, server.cookie)
+        # Get the backend for this server
+        backend = cast(Backend, server.cookie)
 
         # Allocate a unique string request ID
         rass_req_id = f"rass{next_rass_request_id}"
@@ -289,7 +235,7 @@ async def run_multiplexer(
         future: asyncio.Future[tuple[bool, JSON]] = asyncio.Future()
 
         # Track this request
-        rass_request_mapping[rass_req_id] = (proc, method, payload, future)
+        rass_request_mapping[rass_req_id] = (backend, method, payload, future)
 
         # Send the request to the server
         message = {
@@ -298,8 +244,8 @@ async def run_multiplexer(
             "method": method,
             "params": payload,
         }
-        await write_lsp_message(proc.stdin, message)
-        log_message(f"[{proc.name}] r->", message, method)
+        await backend.deliver_message(message)
+        log_message(f"[{backend.name}] r->", message, method)
 
         # Wait for the response
         is_error, response_payload = await future
@@ -313,8 +259,8 @@ async def run_multiplexer(
             debug(f"Skipping notification to server (shutting down): {method}")
             return
 
-        # Get the proc for this server
-        proc = cast(InferiorProcess, server.cookie)
+        # Get the backend for this server
+        backend = cast(Backend, server.cookie)
 
         # Send the notification to the server
         message = {
@@ -322,12 +268,12 @@ async def run_multiplexer(
             "method": method,
             "params": payload,
         }
-        await write_lsp_message(proc.stdin, message)
-        log_message(f"[{proc.name}] -->", message, method)
+        await backend.deliver_message(message)
+        log_message(f"[{backend.name}] -->", message, method)
 
     # Instantiate logic with callbacks
     logic = logic_class(
-        [p.server for p in procs],
+        [b.server for b in backends],
         notify_client,
         request_client,
         request_server,
@@ -348,9 +294,9 @@ async def run_multiplexer(
 
     def _start_aggregation(item, req_id, method, responders):
         """Start a new aggregation with the first response."""
-        proc = cast(InferiorProcess, item.server.cookie)
+        backend = cast(Backend, item.server.cookie)
         outstanding = responders.copy()
-        outstanding.discard(proc)
+        outstanding.discard(backend)
 
         async def send_whatever_is_there(state: AggregationState, method):
             await asyncio.sleep(
@@ -364,7 +310,7 @@ async def run_multiplexer(
             outstanding=outstanding,
             id=req_id,
             method=method,
-            aggregate={id(proc): item},
+            aggregate={id(backend): item},
         )
         debug(
             f"Message from {item.server.name} starts aggregation for {method} ({id(ag)})"
@@ -376,7 +322,7 @@ async def run_multiplexer(
 
     async def _continue_aggregation(item, ag):
         """Continue an existing aggregation with an additional message."""
-        proc = cast(InferiorProcess, item.server.cookie)
+        backend = cast(Backend, item.server.cookie)
         method = ag.method
         debug(
             f"Message from {item.server.name} continues aggregation for {method} ({id(ag)})"
@@ -388,8 +334,8 @@ async def run_multiplexer(
             )
             return
 
-        ag.aggregate[id(proc)] = item
-        ag.outstanding.discard(proc)
+        ag.aggregate[id(backend)] = item
+        ag.outstanding.discard(backend)
 
         if not ag.outstanding:
             debug(f"Completing aggregation for {method} ({id(ag)})!")
@@ -413,7 +359,7 @@ async def run_multiplexer(
 
         # Determine which servers to route to or get direct response
         result = await logic.on_client_request(
-            method, params, [proc.server for proc in procs]
+            method, params, [b.server for b in backends]
         )
 
         # Check if we should respond immediately without forwarding
@@ -432,30 +378,27 @@ async def run_multiplexer(
         target_servers = result
         for t in target_servers:
             logic.process_request(method, params, t)
-        target_procs = cast(
-            list[InferiorProcess],
-            [s.cookie for s in target_servers],
-        )
-        if target_procs:
+        target_backends = [cast(Backend, s.cookie) for s in target_servers]
+        if target_backends:
             # Send to selected servers
-            for p in target_procs:
+            for b in target_backends:
                 msg = {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "method": method,
                     "params": params,
                 }
-                await write_lsp_message(p.stdin, msg)
-                log_message(f"[{p.name}] -->", msg, method)
+                await b.deliver_message(msg)
+                log_message(f"[{b.name}] -->", msg, method)
 
-            # Update tracking to include server procs, but only if we
+            # Update tracking to include server backends, but only if we
             # weren't cancelled already.
             if existing := inflight_requests.get(req_id):
                 method_stored, params_stored, _ = existing
                 inflight_requests[req_id] = (
                     method_stored,
                     params_stored,
-                    set(target_procs),
+                    set(target_backends),
                 )
         else:
             # respond with rass error
@@ -491,14 +434,14 @@ async def run_multiplexer(
                         if probe:
                             # Prevents responses to the cancelled
                             # request from making it to the client...
-                            _, _, target_procs = inflight_requests.pop(
+                            _, _, target_backends = inflight_requests.pop(
                                 cancelled_id
                             )
                             # ...but still forward $/cancelRequest to
                             # servers that got the request, of course.
-                            for p in target_procs:
-                                await write_lsp_message(p.stdin, msg)
-                                log_message(f"[{p.name}] -->", msg, method)
+                            for b in target_backends:
+                                await b.deliver_message(msg)
+                                log_message(f"[{b.name}] -->", msg, method)
                     else:
                         await logic.on_client_notification(
                             method, msg.get("params", {})
@@ -543,7 +486,7 @@ async def run_multiplexer(
 
                     elif info := server_request_mapping.get(id):
                         # This is a response to a server request - remap ID and route to correct server
-                        original_id, target_proc, req_method, req_params = info
+                        original_id, target_backend, req_method, req_params = info
                         del server_request_mapping[id]
 
                         # Inform LspLogic
@@ -556,14 +499,14 @@ async def run_multiplexer(
                             req_params,
                             cast(JSON, response_payload),
                             is_error,
-                            target_proc.server,
+                            target_backend.server,
                         )
 
                         # Remap ID back to original
                         msg["id"] = original_id
-                        await write_lsp_message(target_proc.stdin, msg)
+                        await target_backend.deliver_message(msg)
                         log_message(
-                            f"[{target_proc.name}] s->", msg, req_method
+                            f"[{target_backend.name}] s->", msg, req_method
                         )
                     else:
                         # Unknown response, log error
@@ -572,22 +515,21 @@ async def run_multiplexer(
         except Exception as e:
             log(f"Error handling client messages: {e}")
         finally:
-            # Close all server stdin
-            for p in procs:
-                p.stdin.close()
-                await p.stdin.wait_closed()
+            # Initiating a shutdown by closing all servers input stream.
+            for b in backends:
+                await b.close()
 
-    async def handle_server_messages(proc: InferiorProcess):
+    async def handle_server_messages(backend: Backend):
         """Read from a server and route back to client."""
         nonlocal next_remapped_id
         try:
             while True:
-                msg = await read_lsp_message(proc.stdout)
+                msg = await backend.poll()
                 if msg is None:
                     # Server died - check if this was expected
                     if not shutting_down:
-                        log(f"Error: Server {proc.name} died unexpectedly")
-                        raise RuntimeError(f"Server {proc.name} crashed")
+                        log(f"Error: Server {backend.name} died unexpectedly")
+                        raise RuntimeError(f"Server {backend.name} crashed")
                     break
 
                 # Distinguish message types.  Notifications won't have
@@ -597,11 +539,11 @@ async def run_multiplexer(
 
                 # Server request: has both method and id
                 if method and req_id is not None:
-                    log_message(f"[{proc.name}] <-s", msg, method)
+                    log_message(f"[{backend.name}] <-s", msg, method)
                     # Handle server request
                     params = msg.get("params", {})
                     direct_response = await logic.on_server_request(
-                        method, cast(JSON, params), proc.server
+                        method, cast(JSON, params), backend.server
                     )
 
                     # Check if we should respond immediately without forwarding
@@ -613,8 +555,8 @@ async def run_multiplexer(
                             if direct_response.is_error
                             else "result": direct_response.payload,
                         }
-                        await write_lsp_message(proc.stdin, response_msg)
-                        log_message(f"[{proc.name}] s->", response_msg, method)
+                        await backend.deliver_message(response_msg)
+                        log_message(f"[{backend.name}] s->", response_msg, method)
                         continue
 
                     # This is a request from server to client - remap ID
@@ -622,7 +564,7 @@ async def run_multiplexer(
                     next_remapped_id += 1
                     server_request_mapping[remapped_id] = (
                         req_id,
-                        proc,
+                        backend,
                         method,
                         cast(JSON, params),
                     )
@@ -646,7 +588,7 @@ async def run_multiplexer(
                             if is_error
                             else msg.get("result", {})
                         )
-                        log_message(f"[{proc.name}] <-r", msg, rass_method)
+                        log_message(f"[{backend.name}] <-r", msg, rass_method)
 
                         # Resolve the future
                         future.set_result((is_error, cast(JSON, payload)))
@@ -664,15 +606,15 @@ async def run_multiplexer(
                         if is_error
                         else msg.get("result", {})
                     )
-                    log_message(f"[{proc.name}] <--", msg, method)
+                    log_message(f"[{backend.name}] <--", msg, method)
                     await logic.on_server_response(
                         method,
                         req_params,
                         cast(JSON, payload),
                         is_error,
-                        proc.server,
+                        backend.server,
                     )
-                    item = PayloadItem(payload, proc.server, is_error)
+                    item = PayloadItem(payload, backend.server, is_error)
 
                     # Skip most of aggregation state business if the
                     # original request targeted only one server.
@@ -688,17 +630,17 @@ async def run_multiplexer(
                         _start_aggregation(item, req_id, method, responders)
                 else:
                     # Server notification - let logic layer handle it
-                    log_message(f"[{proc.name}] <--", msg, method)
+                    log_message(f"[{backend.name}] <--", msg, method)
                     payload = msg.get("params", {})
                     await logic.on_server_notification(
-                        method, cast(JSON, payload), proc.server
+                        method, cast(JSON, payload), backend.server
                     )
 
         except RuntimeError:
             # Server crashed - re-raise to propagate to main
             raise
         except Exception as e:
-            log(f"Error handling messages from {proc.name}: {e}")
+            log(f"Error handling messages from {backend.name}: {e}")
             print(traceback.format_exc(), file=sys.stderr)
         finally:
             pass
@@ -706,12 +648,12 @@ async def run_multiplexer(
     # Create all tasks
     tasks = [handle_client_messages()]
 
-    for p in procs:
-        tasks.append(handle_server_messages(p))
+    for b in backends:
+        tasks.append(handle_server_messages(b))
 
         # Forward stderr
         if not opts.quiet_server:
-            tasks.append(forward_server_stderr(p))
+            tasks.append(forward_server_stderr(b))
 
     try:
         await asyncio.gather(*tasks)
@@ -720,5 +662,5 @@ async def run_multiplexer(
         sys.exit(1)
 
     # Wait for all servers to exit
-    for p in procs:
-        _ = await p.process.wait()
+    for b in backends:
+        await b.wait_to_exit()

@@ -14,6 +14,11 @@ LOG_EVENT = 3
 LOG_DEBUG = 4
 LOG_TRACE = 5
 
+log_levels = []
+for var in globals().copy():
+    if var.startswith('LOG_'):
+        log_levels.append(var)
+
 # Global settings
 _current_log_level = LOG_EVENT
 _max_log_length = 4000
@@ -22,6 +27,13 @@ def set_log_level(level: int) -> None:
     """Set the global log level."""
     global _current_log_level
     _current_log_level = level
+
+def set_log_level_from_string(level: str) -> None:
+    """Set the global log level from a string parameter.
+    Level should be an uppercase string starting with LOG_.
+    """
+    level_int = globals()[level]
+    set_log_level(level_int)
 
 def get_log_level() -> int:
     """Get the current log level."""
