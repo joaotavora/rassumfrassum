@@ -7,6 +7,7 @@ forwards it to servers whose watchers match the changed file's URI.
 """
 
 import asyncio
+from pathlib import Path
 
 from rassumfrassum.test2 import LspTestEndpoint, log
 
@@ -14,6 +15,10 @@ async def main():
     """Test file watcher filtering."""
 
     client = await LspTestEndpoint.create()
+
+    # Get fixture directory path
+    fixture_dir = Path(__file__).parent / 'fixture'
+    root_uri = fixture_dir.resolve().as_uri()
 
     # Initialize with didChangeWatchedFiles and streaming diagnostics support
     capabilities = {
@@ -29,7 +34,7 @@ async def main():
             }
         }
     }
-    await client.initialize(capabilities=capabilities, rootUri='file:///tmp/test-project')
+    await client.initialize(capabilities=capabilities, rootUri=root_uri)
 
     # Handle client/registerCapability requests from servers
     # Both ty and ruff will send these
@@ -41,9 +46,10 @@ async def main():
 
     # Open main.py
     log("client", "Opening main.py")
+    main_uri = (fixture_dir / 'main.py').resolve().as_uri()
     await client.notify('textDocument/didOpen', {
         'textDocument': {
-            'uri': 'file:///tmp/test-project/main.py',
+            'uri': main_uri,
             'version': 1,
             'languageId': 'python',
             'text': 'def foo():\n    pass\n'
@@ -61,38 +67,53 @@ async def main():
     # This should only match ty's watchers (watching **/*, i.e., all Python files)
     # It should NOT match ruff's watchers (only *.toml files)
     log("client", "Sending didChangeWatchedFiles for nearby.py...")
+    nearby_uri = (fixture_dir / 'nearby.py').resolve().as_uri()
     await client.notify('workspace/didChangeWatchedFiles', {
         'changes': [
             {
-                'uri': 'file:///tmp/test-project/nearby.py',
+                'uri': nearby_uri,
                 'type': 2  # Changed
             }
         ]
     })
 
-    # Try to collect diagnostics after the file change notification
-    # We should NOT get diagnostics for main.py again
-    log("client", "Checking for spurious diagnostics...")
-    post_change_main_diag_count = 0
+    # Try to collect diagnostics after the nearby.py change
+    # We should NOT get diagnostics since nearby.py was correctly filtered
+    log("client", "Checking that nearby.py was filtered...")
+    got_diag_after_nearby = False
     try:
-        async def collect_post_change():
-            nonlocal post_change_main_diag_count
-            while payload := await client.read_notification('$/streamDiagnostics'):
-                uri = payload.get('uri')
-                log("client", f"Got diagnostic for {uri}")
-                if uri == 'file:///tmp/test-project/main.py':
-                    post_change_main_diag_count += 1
-                    log("client", f"WARNING: Got spurious diagnostic for main.py!")
-
-        await asyncio.wait_for(collect_post_change(), timeout=1.0)
+        diag = await asyncio.wait_for(
+            client.read_notification('$/streamDiagnostics'),
+            timeout=1.0
+        )
+        log("client", f"WARNING: Got unexpected diagnostic for {diag.get('uri')}")
+        got_diag_after_nearby = True
     except asyncio.TimeoutError:
-        log("client", "Timeout - no more diagnostics")
+        log("client", "Timeout - no diagnostics as expected")
 
-    # Assert we didn't get diagnostics for main.py after the file change
-    assert post_change_main_diag_count == 0, \
-        f"Expected no diagnostics for main.py after nearby.py change, got {post_change_main_diag_count}"
+    assert not got_diag_after_nearby, "Expected no diagnostics after nearby.py change"
+    log("client", "SUCCESS: nearby.py notification correctly filtered out")
 
-    log("client", "SUCCESS: No spurious diagnostics for main.py")
+    # Now send didChangeWatchedFiles for pyproject.toml
+    # This should match ruff's watchers (*.toml files)
+    # We expect ruff to re-analyze and send diagnostics for main.py
+    log("client", "Sending didChangeWatchedFiles for pyproject.toml...")
+    toml_uri = (fixture_dir / 'pyproject.toml').resolve().as_uri()
+    await client.notify('workspace/didChangeWatchedFiles', {
+        'changes': [
+            {
+                'uri': toml_uri,
+                'type': 2  # Changed
+            }
+        ]
+    })
+
+    # Wait for diagnostics from ruff for main.py
+    log("client", "Waiting for diagnostic for main.py from ruff...")
+    ruff_diag = await client.read_notification('$/streamDiagnostics')
+    assert ruff_diag.get('uri') == main_uri, \
+        f"Expected diagnostic for main.py, got {ruff_diag.get('uri')}"
+    log("client", "SUCCESS: Got diagnostic for main.py from ruff after toml change")
 
     await client.byebye()
 

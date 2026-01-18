@@ -261,15 +261,15 @@ class LspLogic:
         elif method == 'workspace/didChangeWatchedFiles' and (
             changes := params.get("changes")
         ):
-            # Forward only to servers with matching watchers
-            servers_to_notify: set[Server] = set()
-            for change in changes:
-                if uri := change.get("uri"):
-                    for server, patterns in self.file_watchers.values():
-                        if any(_uri_matches_pattern(uri, p) for p in patterns):
-                            servers_to_notify.add(server)
-            for server in servers_to_notify:
-                await self.notify_server(server, method, params)
+            # FIXME: If there are multiple changes, we send all of them to a server
+            # even if it only cares about some. Should filter params per server.
+            for server, patterns in self.file_watchers.values():
+                for change in changes:
+                    if (uri := change.get("uri")) and any(
+                        _uri_matches_pattern(uri, p) for p in patterns
+                    ):
+                        await self.notify_server(server, method, params)
+                        break
         else:
             await forward_all()
 
