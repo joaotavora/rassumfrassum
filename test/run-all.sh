@@ -3,6 +3,7 @@
 
 TIMEOUT_SCALE=${TIMEOUT_SCALE:-1.0}
 TIMEOUT=$(awk "BEGIN {printf \"%.1f\", ${TIMEOUT:-10} * $TIMEOUT_SCALE}")
+BATCH_SIZE=${BATCH_SIZE:-8}
 
 # Colorize helper (set to false to disable colors)
 USE_COLOR=true
@@ -33,43 +34,56 @@ fi
 TMPDIR=$(mktemp -d)
 trap "rm -rf '$TMPDIR'" EXIT
 
-# Launch all tests in parallel
-PIDS=()
-for d in $TEST_DIRS; do
-    n=$(basename "$d")
-    echo "Start: $n"
+# Convert TEST_DIRS to array for batch processing
+TEST_ARRAY=($TEST_DIRS)
+TOTAL_TESTS=${#TEST_ARRAY[@]}
 
-    # Run in background, capturing output and timing
-    (
-        start=$(date +%s%N)
-        output=$(timeout "$TIMEOUT" "$d/run.sh" 2>&1)
-        rc=$?
-        end=$(date +%s%N)
-        elapsed_ns=$((end - start))
-        elapsed=$(awk "BEGIN {printf \"%.3f\", $elapsed_ns / 1000000000}")
+# Launch tests in batches
+for ((i=0; i<TOTAL_TESTS; i+=BATCH_SIZE)); do
+    PIDS=()
+    BATCH_END=$((i + BATCH_SIZE))
+    if [ $BATCH_END -gt $TOTAL_TESTS ]; then
+        BATCH_END=$TOTAL_TESTS
+    fi
 
-        # Determine status with colors
-        case $rc in
-            0) status=$(colorize "PASSED" green) ;;
-            77) status=$(colorize "SKIPPED" yellow) ;;
-            124) status=$(colorize "TIMED OUT" red) ;;
-            *) status=$(colorize "FAILED" red) ;;
-        esac
+    # Launch current batch
+    for ((j=i; j<BATCH_END; j++)); do
+        d="${TEST_ARRAY[$j]}"
+        n=$(basename "$d")
+        echo "Start: $n"
 
-        # Save results
-        echo "$rc" > "$TMPDIR/$n.rc"
-        echo "$elapsed" > "$TMPDIR/$n.time"
-        echo "$output" > "$TMPDIR/$n.output"
+        # Run in background, capturing output and timing
+        (
+            start=$(date +%s%N)
+            output=$(timeout "$TIMEOUT" "$d/run.sh" 2>&1)
+            rc=$?
+            end=$(date +%s%N)
+            elapsed_ns=$((end - start))
+            elapsed=$(awk "BEGIN {printf \"%.3f\", $elapsed_ns / 1000000000}")
 
-        # Print completion message
-        printf "%s: %s (%ss)\n" "$status" "$n" "$elapsed"
-    ) &
-    PIDS+=($!)
-done
+            # Determine status with colors
+            case $rc in
+                0) status=$(colorize "PASSED" green) ;;
+                77) status=$(colorize "SKIPPED" yellow) ;;
+                124) status=$(colorize "TIMED OUT" red) ;;
+                *) status=$(colorize "FAILED" red) ;;
+            esac
 
-# Wait for all to finish
-for pid in "${PIDS[@]}"; do
-    wait $pid
+            # Save results
+            echo "$rc" > "$TMPDIR/$n.rc"
+            echo "$elapsed" > "$TMPDIR/$n.time"
+            echo "$output" > "$TMPDIR/$n.output"
+
+            # Print completion message
+            printf "%s: %s (%ss)\n" "$status" "$n" "$elapsed"
+        ) &
+        PIDS+=($!)
+    done
+
+    # Wait for current batch to finish
+    for pid in "${PIDS[@]}"; do
+        wait $pid
+    done
 done
 
 echo
