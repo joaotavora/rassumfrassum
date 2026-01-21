@@ -153,9 +153,15 @@ class LspLogic:
         elif method == 'textDocument/codeAction':
             return [s for s in servers if s.caps.get('codeActionProvider')]
 
-        # Same for definition
-        elif method == 'textDocument/definition':
-            return [s for s in servers if s.caps.get('definitionProvider')]
+        # Route location-based requests to all supporting servers
+        elif cap := {
+            'textDocument/definition': 'definitionProvider',
+            'textDocument/typeDefinition': 'typeDefinitionProvider',
+            'textDocument/implementation': 'implementationProvider',
+            'textDocument/declaration': 'declarationProvider',
+            'textDocument/references': 'referencesProvider',
+        }.get(method):
+            return [s for s in servers if s.caps.get(cap)]
 
         elif method == 'workspace/executeCommand':
             probe = self.commands_map.get(cast(str, params.get('command')))
@@ -497,7 +503,13 @@ class LspLogic:
         # Otherwise, skip errors and aggregate successful responses
         items = [item for item in items if (not item.is_error) and item.payload]
 
-        if method == 'textDocument/definition':
+        if method in (
+            'textDocument/definition',
+            'textDocument/typeDefinition',
+            'textDocument/implementation',
+            'textDocument/declaration',
+            'textDocument/references',
+        ):
             res = reduce_maybe(
                 items,
                 lambda acc, item: self._merge_locations(
