@@ -48,14 +48,14 @@ rass -- ty server -- ruff server
 
 which works just as well.  You can compose as many servers as you want
 this way.  See `rass --help` for more help.  The `rass` program
-executable is installed by the package manager.  
+executable is installed by the package manager.
 
 If you need to run this from a Git checkout with no installation at
 all:
 
 ```bash
 export PYTHONPATH=$PWD/src
-python3 -m rassumfrassum -- ty server -- ruf server
+python3 -m rassumfrassum -- ty server -- ruff server
 ```
 
 ## Presets
@@ -87,16 +87,22 @@ rass python -- codebook-lsp server
 ### Bundled presets
 
 It's early days and Rassumfrassum bundles only a few of these.  Some
-are very simple, and some are more advanced.  Your mileage may vary.
+are very simple, and some are slightly more complex.
 
-* `python`: `ty` + `ruff`
+* `tyruff`: for `ty` + `ruff` (simple)
 
-* `basedruff`: `basedpyright-langserver` + `ruff`
+* `basedruff`: for `basedpyright-langserver` + `ruff` (simple)
 
-* `ts`: hooking preset for `typescript-language-server` and `eslint`
+* `tslint`: for `typescript-language-server` + `eslint` (complex)
 
-* `vue`: hooking preset for `vue-language-server` and
-  `tailwindcss-language-server`
+* `vuetail`: for `vue-language-server` + `tailwindcss-language-server`
+  (complex)
+  
+The "complex" presets use special hooks of the 'LspLogic' class to
+massage the exchanged messages.  The servers in question (usually the
+JS-land ones) unfortunately weren't designed to startup without
+copious amounts of handholding given to them by specific clients
+(usually VSCode).
 
 ### User Presets
 
@@ -108,10 +114,11 @@ these locations in order:
 3. `~/.rassumfrassum/` (legacy)
 4. Bundled presets directory (last resort)
 
-To use [ty][ty] instead of `basedpyright`, create `~/.config/rassumfrassum/python.py`:
+To use [pylsp][pylsp] and ruff create, say, 
+`~/.config/rassumfrassum/pylspruff.py`:
 
 ```python
-"""Python preset using ty instead of basedpyright."""
+"""Python preset using pylsp instead of ty."""
 
 def servers():
     return [
@@ -350,3 +357,4 @@ in the `eglot-handle-notification` method for
 [python-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/python.py
 [basedruff-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/basedruff.py
 [ts-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/ts.py
+[pylsp]: https://github.com/python-lsp/python-lsp-server

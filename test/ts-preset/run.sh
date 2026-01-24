@@ -19,4 +19,4 @@ fi
     exit 77
 }
 
-../yoyo.sh ./client.py --rass-- ts
+../yoyo.sh ./client.py --rass-- tslint
