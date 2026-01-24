@@ -809,6 +809,12 @@ def _process_watcher(watcher: JSON) -> list[str]:
         if not base_uri or not pattern:
             return []  # Malformed
 
+        # baseUri can be either a string or a dict with 'uri' and 'name' fields
+        if isinstance(base_uri, dict):
+            base_uri = base_uri.get("uri")
+            if not base_uri:
+                return []  # Malformed
+
         # Parse baseUri to get path
         base_parsed = urlparse(base_uri)
         if base_parsed.scheme != "file":
