@@ -95,6 +95,8 @@ are very simple, and some are slightly more complex.
 
 * `tslint`: for `typescript-language-server` + `eslint` (complex)
 
+* `tsbiome`: for `typescript-language-server` + `biome` (simple)
+
 * `vuetail`: for `vue-language-server` + `tailwindcss-language-server`
   (complex)
   
