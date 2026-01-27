@@ -124,7 +124,7 @@ To use [pylsp][pylsp] and ruff create, say,
 
 def servers():
     return [
-        ['ty', 'server'],
+        ['pylsp'],
         ['ruff', 'server']
     ]
 ```
