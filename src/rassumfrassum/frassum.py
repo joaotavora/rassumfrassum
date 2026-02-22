@@ -418,6 +418,8 @@ class LspLogic:
                 self._stash_data(action, server, doc_state)
                 if (command := action.get("command")) and (
                     command_name := command.get("command")
+                    if isinstance(command, dict)
+                    else command
                 ):
                     self.commands_map[command_name] = server
         elif (
