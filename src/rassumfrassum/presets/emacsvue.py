@@ -37,28 +37,42 @@ def relay_servers():
 def _resolve_vue_plugin_location() -> str:
     """Resolve the node_modules path containing @vue/typescript-plugin.
 
-    Uses pnpm exec to resolve through pnpm's module resolution, then
-    extracts the project-level node_modules as the probe location.
-    tsserver looks for <probeLocation>/<plugin-name>, so passing the
-    project's node_modules lets it find the plugin via pnpm's symlink.
+    tsserver looks for <probeLocation>/<plugin-name>, so we need to return
+    the node_modules directory that contains @vue/typescript-plugin.
+
+    Tries plain `node` first (works with any package manager), then falls
+    back to `pnpm exec node` for pnpm's stricter module resolution.
     """
-    try:
-        result = subprocess.run(
-            ['pnpm', 'exec', 'node', '-p',
-             "require.resolve('@vue/typescript-plugin/package.json')"],
-            capture_output=True, text=True, timeout=10,
-        )
-        resolved = result.stdout.strip()
-        # In pnpm: .../node_modules/.pnpm/@vue+.../@vue/typescript-plugin/package.json
-        # Extract the project-level node_modules (before .pnpm)
-        idx = resolved.find('/node_modules/.pnpm/')
-        if idx >= 0:
-            return resolved[:idx + len('/node_modules')]
-        # Non-pnpm: .../node_modules/@vue/typescript-plugin/package.json
-        # Go up 3 levels to get node_modules
-        return str(Path(resolved).parent.parent.parent)
-    except Exception:
-        return ''
+    resolve_script = "require.resolve('@vue/typescript-plugin/package.json')"
+    commands = [
+        ['node', '-p', resolve_script],
+        ['pnpm', 'exec', 'node', '-p', resolve_script],
+    ]
+    for cmd in commands:
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10,
+            )
+            resolved = result.stdout.strip()
+            if not resolved or result.returncode != 0:
+                continue
+            return _extract_node_modules(resolved)
+        except Exception:
+            continue
+    return ''
+
+
+def _extract_node_modules(resolved_path: str) -> str:
+    """Extract the probe-location node_modules from a resolved package path.
+
+    Handles both pnpm (.pnpm symlink structure) and standard layouts.
+    """
+    # pnpm: .../node_modules/.pnpm/@vue+.../@vue/typescript-plugin/package.json
+    idx = resolved_path.find('/node_modules/.pnpm/')
+    if idx >= 0:
+        return resolved_path[:idx + len('/node_modules')]
+    # Standard: .../node_modules/@vue/typescript-plugin/package.json
+    return str(Path(resolved_path).parent.parent.parent)
 
 
 def relay_spec():
