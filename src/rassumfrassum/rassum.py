@@ -125,18 +125,32 @@ async def launch_server(
 
 
 async def run_multiplexer(
-    server_commands: list[list[str]], opts: argparse.Namespace
+    server_commands: list[list[str]],
+    opts: argparse.Namespace,
+    relay_server_commands: list[list[str]] | None = None,
+    relay_spec=None,
 ) -> None:
     """
     Main multiplexer.
     Blocks on asyncio.gather() until a bunch of loopy async tasks complete.
 
     """
+    from .relay import RelayHandler
+
     # Launch all servers
     procs: list[InferiorProcess] = []
     for i, cmd in enumerate(server_commands):
         p = await launch_server(cmd, i)
         procs.append(p)
+
+    # Launch relay servers (separate from main procs)
+    relay_procs: list[InferiorProcess] = []
+    relay_handlers: list[RelayHandler] = []
+    if relay_server_commands and relay_spec:
+        for i, cmd in enumerate(relay_server_commands):
+            p = await launch_server(cmd, len(procs) + i)
+            relay_procs.append(p)
+            log(f"Relay server: {p.name}")
 
     # Create message router using specified logic class
     class_name = opts.logic_class
@@ -320,10 +334,23 @@ async def run_multiplexer(
         message = {
             "jsonrpc": "2.0",
             "method": method,
-            "params": payload,
         }
+        # FIX: "exit" and some other notifications have no params;
+        # omit the key entirely rather than sending "params": null.
+        if payload is not None:
+            message["params"] = payload
         await write_lsp_message(proc.stdin, message)
         log_message(f"[{proc.name}] -->", message, method)
+
+    # Create relay handlers (need request_server/notify_server defined above)
+    for rp in relay_procs:
+        handler = RelayHandler(
+            spec=relay_spec,
+            server=rp.server,
+            request_server=request_server,
+            notify_server=notify_server,
+        )
+        relay_handlers.append(handler)
 
     # Instantiate logic with callbacks
     logic = logic_class(
@@ -334,6 +361,13 @@ async def run_multiplexer(
         notify_server,
         opts,
     )
+
+    # Wire relay handlers into logic layer
+    if relay_handlers:
+        logic.relay_handlers = {
+            relay_spec.match_method: handler
+            for handler in relay_handlers
+        }
 
     def _reconstruct(ag: AggregationState) -> JSON:
         """Reconstruct payload part of response from aggregation state."""
@@ -408,9 +442,17 @@ async def run_multiplexer(
         """Handle a single client request (spawned task to avoid blocking)."""
         nonlocal shutting_down
 
+        # Initialize relay servers when client sends initialize
+        if method == "initialize" and relay_handlers:
+            for handler in relay_handlers:
+                asyncio.create_task(handler.initialize(params))
+
         # Track shutdown requests
         if method == "shutdown":
             shutting_down = True
+            # Shut down relay servers
+            for handler in relay_handlers:
+                asyncio.create_task(handler.shutdown())
 
         # Determine which servers to route to or get direct response
         result = await logic.on_client_request(
@@ -574,10 +616,20 @@ async def run_multiplexer(
         except Exception as e:
             log(f"Error handling client messages: {e}")
         finally:
-            # Close all server stdin
-            for p in procs:
+            # Close all server stdin (including relay servers)
+            for p in procs + relay_procs:
                 p.stdin.close()
                 await p.stdin.wait_closed()
+            # FIX: After closing stdin, server processes may still be
+            # alive (e.g. if they ignore exit or have slow cleanup).
+            # Their lingering stdout/stderr keeps handle_server_messages
+            # and forward_server_stderr tasks alive, blocking
+            # asyncio.gather forever.  Kill stragglers after a grace
+            # period so the process can exit cleanly.
+            await asyncio.sleep(0.5)
+            for p in procs + relay_procs:
+                if p.process.returncode is None:
+                    p.process.kill()
 
     async def handle_server_messages(proc: InferiorProcess):
         """Read from a server and route back to client."""
@@ -715,6 +767,12 @@ async def run_multiplexer(
         if not opts.quiet_server:
             tasks.append(forward_server_stderr(p))
 
+    # Relay server message handlers (so rass can read their responses/requests)
+    for p in relay_procs:
+        tasks.append(handle_server_messages(p))
+        if not opts.quiet_server:
+            tasks.append(forward_server_stderr(p))
+
     try:
         await asyncio.gather(*tasks)
     except RuntimeError as e:
@@ -722,5 +780,5 @@ async def run_multiplexer(
         sys.exit(1)
 
     # Wait for all servers to exit
-    for p in procs:
+    for p in procs + relay_procs:
         _ = await p.process.wait()
