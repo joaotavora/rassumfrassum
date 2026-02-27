@@ -323,7 +323,11 @@ async def run_multiplexer(
         """
         Send a notification to a server (for use by logic layer).
         """
-        if shutting_down:
+        # FIX: The original guard `if shutting_down` dropped ALL
+        # notifications, including "exit".  Since servers wait for the
+        # exit notification after responding to shutdown, dropping it
+        # caused them to hang indefinitely, preventing clean teardown.
+        if shutting_down and method != "exit":
             debug(f"Skipping notification to server (shutting down): {method}")
             return
 
