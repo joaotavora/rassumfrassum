@@ -187,6 +187,7 @@ class LspLogic:
             'textDocument/rename': 'renameProvider',
             'textDocument/formatting': 'documentFormattingProvider',
             'textDocument/rangeFormatting': 'documentRangeFormattingProvider',
+            'textDocument/documentSymbol': 'documentSymbolProvider',
         }.get(method):
             for s in servers:
                 if s.caps.get(cap):
