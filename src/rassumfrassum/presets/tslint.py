@@ -37,6 +37,7 @@ def _eslint_config(workspace_folder: dict | None = None) -> dict:
         'problems': {},
         'rulesCustomizations': [],
         'nodePath': None,
+        'experimental': {},
     }
     if workspace_folder:
         config['workspaceFolder'] = workspace_folder
