@@ -1,6 +1,7 @@
 """TypeScript preset: typescript-language-server + eslint-language-server."""
 
 import os
+import shutil
 
 from rassumfrassum.frassum import LspLogic, Server
 from rassumfrassum.json import JSON
@@ -88,9 +89,14 @@ class TypeScriptLogic(LspLogic):
 
 def servers():
     """Return eslint-language-server."""
+
+    eslint_server = 'vscode-eslint-language-server'
+    if shutil.which(eslint_server) is None:
+        eslint_server = 'eslint-language-server'
+
     return [
         ['typescript-language-server', '--stdio'],
-        ['eslint-language-server', '--stdio'],
+        [eslint_server, '--stdio'],
     ]
 
 
