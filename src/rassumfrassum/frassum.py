@@ -161,7 +161,7 @@ class LspLogic:
             'textDocument/declaration': 'declarationProvider',
             'textDocument/references': 'referencesProvider',
         }.get(method):
-            return [s for s in servers if s.caps.get(cap)]
+            return [s for s in servers if s.caps.get(cap) is not None]
 
         elif method == 'workspace/executeCommand':
             probe = self.commands_map.get(cast(str, params.get('command')))
@@ -190,7 +190,7 @@ class LspLogic:
             'textDocument/documentSymbol': 'documentSymbolProvider',
         }.get(method):
             for s in servers:
-                if s.caps.get(cap):
+                if s.caps.get(cap) is not None:
                     return [s]
             return []
 
