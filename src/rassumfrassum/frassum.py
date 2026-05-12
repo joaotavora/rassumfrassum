@@ -93,6 +93,8 @@ class LspLogic:
         self.commands_map: dict[str, Server] = {}
         # Track file watchers: registration_id -> (server, list of expanded glob patterns)
         self.file_watchers: dict[str, tuple[Server, list[str]]] = {}
+        # Relay handlers: match_method -> RelayHandler (set by rassum.py)
+        self.relay_handlers: dict = {}
 
     async def on_client_request(
         self, method: str, params: JSON, servers: list[Server]
@@ -109,6 +111,23 @@ class LspLogic:
             List of servers that should receive the request, or
             DirectResponse to send immediately without forwarding
         """
+        result = await self._route_request(method, params, servers)
+
+        # Include relay servers configured to handle this request method
+        if isinstance(result, list):
+            for handler in self.relay_handlers.values():
+                if (
+                    handler.spec.forward_requests
+                    and method in handler.spec.forward_requests
+                ):
+                    result.append(handler.server)
+
+        return result
+
+    async def _route_request(
+        self, method: str, params: JSON, servers: list[Server]
+    ) -> list[Server] | DirectResponse:
+        """Core routing logic for client requests."""
         # Check for data recovery from stash
         if method.endswith("resolve") and (
             stashed := self.stash.get(cast(int, params.get('data')))
@@ -137,6 +156,13 @@ class LspLogic:
             # Force UTF-16 encoding to avoid position mismatches (#8)
             if g := params['capabilities'].get('general'):
                 g['positionEncodings'] = ['utf-16']
+
+            # Merge initializationOptions from CLI/preset
+            if init_opts := getattr(self.opts, 'init_options', None):
+                params['initializationOptions'] = dmerge(
+                    params.get('initializationOptions') or {},
+                    init_opts,
+                )
 
             # In streaming mode, add diagnostic capability to client
             if self.opts.stream_diagnostics:
@@ -256,14 +282,26 @@ class LspLogic:
                 self.document_state[uri] = state
                 return state
 
+        async def forward_relay():
+            for handler in self.relay_handlers.values():
+                if (
+                    handler.spec.forward_notifications
+                    and method in handler.spec.forward_notifications
+                ):
+                    asyncio.create_task(
+                        self._forward_to_relay(handler, method, params)
+                    )
+
         if method == 'textDocument/didClose':
             reset_state(params["textDocument"]["uri"], None)
             await forward_all()
+            await forward_relay()
         elif method in ('textDocument/didOpen', 'textDocument/didChange'):
             uri = params["textDocument"]["uri"]
             v = params["textDocument"]["version"]
             state = reset_state(uri, v)
             await forward_all()
+            await forward_relay()
             # In streaming mode, pull diagnostics from pull-capable servers
             if self.opts.stream_diagnostics:
                 await self._pull_and_stream_diags(
@@ -281,8 +319,15 @@ class LspLogic:
                     ):
                         await self.notify_server(server, method, params)
                         break
+            await forward_relay()
         else:
             await forward_all()
+            await forward_relay()
+
+    async def _forward_to_relay(self, handler, method: str, params: JSON):
+        """Forward a notification to a relay server, waiting for init."""
+        await handler.initialized.wait()
+        await self.notify_server(handler.server, method, params)
 
     async def on_client_response(
         self,
@@ -332,6 +377,11 @@ class LspLogic:
         """
         Handle server notifications and forward to client.
         """
+        # Check relay handlers before normal forwarding
+        if handler := self.relay_handlers.get(method):
+            asyncio.create_task(handler.handle_notification(params, source))
+            return
+
         # Special handling for diagnostics
         if (
             method == 'textDocument/publishDiagnostics'
@@ -419,8 +469,6 @@ class LspLogic:
                 self._stash_data(action, server, doc_state)
                 if (command := action.get("command")) and (
                     command_name := command.get("command")
-                    if isinstance(command, dict)
-                    else command
                 ):
                     self.commands_map[command_name] = server
         elif (
