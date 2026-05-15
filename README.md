@@ -99,7 +99,10 @@ are very simple, and some are slightly more complex.
 
 * `vuetail`: for `vue-language-server` + `tailwindcss-language-server`
   (complex)
-  
+
+* `sveltetail`: for `svelteserver` + `tailwindcss-language-server`
+  (simple)
+
 The "complex" presets use special hooks of the 'LspLogic' class to
 massage the exchanged messages.  The servers in question (usually the
 JS-land ones) unfortunately weren't designed to startup without
@@ -360,3 +363,4 @@ in the `eglot-handle-notification` method for
 [basedruff-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/basedruff.py
 [ts-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/ts.py
 [pylsp]: https://github.com/python-lsp/python-lsp-server
+[svelteserver]: https://github.com/sveltejs/language-tools
