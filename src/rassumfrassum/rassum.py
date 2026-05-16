@@ -460,12 +460,13 @@ async def run_multiplexer(
                     set(target_procs),
                 )
         else:
-            # respond with rass error
             await _respond_to_client(
                 req_id,
                 {
-                    "error": f"[rass] no servers to handle "
-                    f"method='{method}' with params='{params}'!",
+                    "error": {
+                        "code": -32601,
+                        "message": f"[rass] no servers to handle '{method}'",
+                    }
                 },
                 method,
             )
