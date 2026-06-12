@@ -13,13 +13,12 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || -n "$WINDIR" ]]; then
 fi
 
 # The client waits for EOF from rass, which macOS's kqueue never
-# reports on FIFOs, so cap its wait.  rass's exit code decides the
-# test and yoyo.sh's pipefail propagates the pipeline's rightmost
-# (i.e. rass's) non-zero exit status.
-TO=$(command -v timeout || command -v gtimeout || true)
-
+# reports on FIFOs, so cap its wait (with perl's alarm, since macOS
+# has no 'timeout' command).  rass's exit code decides the test and
+# yoyo.sh's pipefail propagates the pipeline's rightmost (i.e.
+# rass's) non-zero exit status.
 set +e
-../yoyo.sh ${TO:+"$TO" 5} ./client.py --rass-- \
+../yoyo.sh perl -e 'alarm shift; exec @ARGV' 5 ./client.py --rass-- \
     -- python ./server.py --name s1 \
     -- python ./server.py --name s2 --crash-after-init
 EXIT_CODE=$?
