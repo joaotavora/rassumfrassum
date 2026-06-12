@@ -5,6 +5,17 @@ TIMEOUT_SCALE=${TIMEOUT_SCALE:-1.0}
 TIMEOUT=$(awk "BEGIN {printf \"%.1f\", ${TIMEOUT:-10} * $TIMEOUT_SCALE}")
 BATCH_SIZE=${BATCH_SIZE:-8}
 
+# macOS doesn't ship a 'timeout' command (GitHub's macOS runners do
+# have GNU coreutils' gtimeout, though)
+if ! command -v timeout >/dev/null 2>&1; then
+    if command -v gtimeout >/dev/null 2>&1; then
+        timeout() { gtimeout "$@"; }
+    else
+        echo "WARNING: no timeout command found, tests may hang" >&2
+        timeout() { shift; "$@"; }
+    fi
+fi
+
 # Colorize helper (set to false to disable colors)
 USE_COLOR=true
 colorize() {
