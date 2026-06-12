@@ -53,11 +53,10 @@ async def create_stdin_reader() -> asyncio.StreamReader:
 class _SyncStdoutWriter:
     """A StreamWriter-like wrapper using synchronous stdout writes.
 
-    asyncio's connect_write_pipe is buggy with FIFOs/pipes on some
-    platforms (the transport fires connection_lost after the first
-    drain, breaking all subsequent writes; seen at least on macOS and
-    on Python 3.14).  Synchronous sys.stdout.buffer.write via
-    run_in_executor avoids this.
+    Used on Windows, where asyncio can't connect pipe transports to
+    stdio, and on macOS, where kqueue-based write transports are
+    broken for FIFOs (connection_lost fires right after the first
+    drain, breaking all subsequent writes).
     """
 
     def __init__(self, loop):
@@ -102,8 +101,17 @@ class _SyncStdoutWriter:
 async def create_stdout_writer() -> asyncio.StreamWriter:
     """Create an asyncio StreamWriter for stdout.
 
-    Uses synchronous writes via run_in_executor on all platforms, see
+    On Windows and macOS: synchronous writes via run_in_executor, see
     _SyncStdoutWriter.
+    On other Unixes: direct connection to sys.stdout.
     """
     loop = asyncio.get_event_loop()
-    return _SyncStdoutWriter(loop)
+
+    if platform.system() in ('Windows', 'Darwin'):
+        return _SyncStdoutWriter(loop)
+    else:
+        transport, protocol = await loop.connect_write_pipe(
+            asyncio.streams.FlowControlMixin, sys.stdout
+        )
+        writer = asyncio.StreamWriter(transport, protocol, None, loop)
+        return writer
