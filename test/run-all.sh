@@ -22,8 +22,9 @@ colorize() {
 export -f colorize
 export USE_COLOR
 
-# Find all test directories (those containing run.sh)
-TEST_DIRS=$(find test -mindepth 2 -maxdepth 2 -name "run.sh" -type f -executable | sed 's|/run.sh$||' | sort)
+# Find all test directories (those containing run.sh).
+# (-perm -u+x instead of -executable: works in BSD/macOS find too)
+TEST_DIRS=$(find test -mindepth 2 -maxdepth 2 -name "run.sh" -type f -perm -u+x | sed 's|/run.sh$||' | sort)
 
 if [ -z "$TEST_DIRS" ]; then
     echo "No tests found"

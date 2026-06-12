@@ -50,12 +50,20 @@ async def create_stdin_reader() -> asyncio.StreamReader:
         return reader
 
 
-class _WindowsStdoutWriter:
-    """A StreamWriter-like wrapper for Windows stdout using run_in_executor."""
+class _SyncStdoutWriter:
+    """A StreamWriter-like wrapper using synchronous stdout writes.
+
+    asyncio's connect_write_pipe is buggy with FIFOs/pipes on some
+    platforms (the transport fires connection_lost after the first
+    drain, breaking all subsequent writes; seen at least on macOS and
+    on Python 3.14).  Synchronous sys.stdout.buffer.write via
+    run_in_executor avoids this.
+    """
 
     def __init__(self, loop):
         self._loop = loop
         self._buffer = bytearray()
+        self._lock = asyncio.Lock()
 
     def write(self, data):
         """Add data to the buffer."""
@@ -77,7 +85,10 @@ class _WindowsStdoutWriter:
             except Exception:
                 pass
 
-        await self._loop.run_in_executor(None, blocking_write, data)
+        # Serialize: concurrent executor writes could hit the pipe out
+        # of order (pipe writes are only atomic up to PIPE_BUF).
+        async with self._lock:
+            await self._loop.run_in_executor(None, blocking_write, data)
 
     def close(self):
         """Close the writer."""
@@ -91,18 +102,8 @@ class _WindowsStdoutWriter:
 async def create_stdout_writer() -> asyncio.StreamWriter:
     """Create an asyncio StreamWriter for stdout.
 
-    On Windows: Uses run_in_executor with blocking writes.
-    On Unix: Direct connection to sys.stdout.
+    Uses synchronous writes via run_in_executor on all platforms, see
+    _SyncStdoutWriter.
     """
     loop = asyncio.get_event_loop()
-
-    if platform.system() == 'Windows':
-        # Windows: Use custom wrapper with run_in_executor
-        return _WindowsStdoutWriter(loop)
-    else:
-        # Unix: Direct connection works fine
-        transport, protocol = await loop.connect_write_pipe(
-            asyncio.streams.FlowControlMixin, sys.stdout
-        )
-        writer = asyncio.StreamWriter(transport, protocol, None, loop)
-        return writer
+    return _SyncStdoutWriter(loop)
