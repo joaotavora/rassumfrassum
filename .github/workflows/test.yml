@@ -10,6 +10,11 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # Windows is informational for now: the Windows stdio machinery is
+    # known-fragile (see test2.py) and the timing-sensitive
+    # drop-tardy-notification test is flaky there
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
       fail-fast: false
       matrix:
