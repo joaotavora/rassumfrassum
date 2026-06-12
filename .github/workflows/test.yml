@@ -27,5 +27,7 @@ jobs:
     - name: Run tests
       shell: bash
       # The vuetail test npm-installs real language servers in its
-      # fixture, so it needs more than the default 10s
-      run: TIMEOUT=180 test/run-all.sh
+      # fixture, so it needs more than the default 10s.  Lower
+      # parallelism: the timing-sensitive tests get flaky when 8 of
+      # them compete for the runners' 2 cores.
+      run: TIMEOUT=180 BATCH_SIZE=4 test/run-all.sh
