@@ -129,6 +129,35 @@ def servers():
     ]
 ```
 
+### Configuring individual servers
+
+The `initializationOptions` field of the LSP `initialize` request can
+carry a special `rass` sub-object that lets you target configuration
+at individual multiplexed servers without the server seeing it.
+
+```json
+"initializationOptions": {
+  "settings": {
+    "someCommonOption": true
+  },
+  "rass": {
+    "ruff": {
+      "settings": {
+        "fixAll": true,
+        "organizeImports": true
+      }
+    }
+  }
+}
+```
+
+Rass strips the `rass` key before forwarding.  The remaining keys in
+`rass` are Python regexes matched against each server's executable
+name; a match merges that value on top of the generic options.  So
+above, `ty` gets `{"settings": {"someCommonOption": true}}` and
+`ruff` gets `{"settings": {"someCommonOption": true, "fixAll": true,
+"organizeImports": true}}`.
+
 ## Performance
 
 Performance is always a question, and it's early days.  But some of
