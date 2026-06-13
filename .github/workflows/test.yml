@@ -19,4 +19,6 @@ jobs:
         python-version: '3.10'
 
     - name: Run tests
-      run: test/run-all.sh
+      # The vuetail test npm-installs real language servers in its
+      # fixture, so it needs more than the default 10s
+      run: TIMEOUT=180 test/run-all.sh
