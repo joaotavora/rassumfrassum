@@ -296,7 +296,20 @@ class LspLogic:
         """
         Handle client responses to server requests.
         """
-        pass
+        if method == 'workspace/configuration' and not is_error:
+            items = cast(list, response_payload)
+            for i, item in enumerate(items):
+                if not isinstance(item, dict) or 'rass' not in item:
+                    continue
+                rass = item['rass']
+                generic = {k: v for k, v in item.items() if k != 'rass'}
+                new_item = generic
+                if isinstance(rass, dict):
+                    for pattern, overlay in rass.items():
+                        if re.search(pattern, server.name) and isinstance(overlay, dict):
+                            new_item = dmerge(overlay, generic)
+                            break
+                items[i] = new_item
 
     async def on_server_request(
         self, method: str, params: JSON, source: Server
