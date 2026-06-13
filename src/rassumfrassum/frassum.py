@@ -580,8 +580,10 @@ class LspLogic:
 
     def process_request(
         self, method: str, params: JSON, server: Server
-    ) -> None:
-        """Called just before request is forwarded to a specific server"""
+    ) -> JSON | None:
+        """Called just before request is forwarded to a specific server.
+
+        Return the params to send to this server, or None for no params."""
         if (
             method == 'textDocument/codeAction'
             and (context := params.get('context'))
@@ -598,6 +600,7 @@ class LspLogic:
                 ):
                     _, orig_data, _ = stashed
                     d['data'] = orig_data
+        return params
 
     def _merge_initialize_payloads(
         self, aggregate: JSON, payload: JSON, source: Server

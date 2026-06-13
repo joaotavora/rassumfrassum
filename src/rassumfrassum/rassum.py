@@ -431,24 +431,20 @@ async def run_multiplexer(
 
         # Otherwise, forward to selected servers
         target_servers = result
-        for t in target_servers:
-            logic.process_request(method, params, t)
-        target_procs = cast(
-            list[InferiorProcess],
-            [s.cookie for s in target_servers],
-        )
-        if target_procs:
-            # Send to selected servers
-            for p in target_procs:
+        if target_servers:
+            # Send to selected servers; process_request may return
+            # per-server params
+            for t in target_servers:
+                server_params = logic.process_request(method, params, t)
                 msg = {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "method": method,
                 }
-                if params:
-                    msg['params'] = params
-                await write_lsp_message(p.stdin, msg)
-                log_message(f"[{p.name}] -->", msg, method)
+                if server_params:
+                    msg['params'] = server_params
+                await write_lsp_message(t.cookie.stdin, msg)
+                log_message(f"[{t.name}] -->", msg, method)
 
             # Update tracking to include server procs, but only if we
             # weren't cancelled already.
@@ -457,7 +453,7 @@ async def run_multiplexer(
                 inflight_requests[req_id] = (
                     method_stored,
                     params_stored,
-                    set(target_procs),
+                    {s.cookie for s in target_servers},
                 )
         else:
             await _respond_to_client(
