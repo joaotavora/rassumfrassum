@@ -5,6 +5,30 @@ TIMEOUT_SCALE=${TIMEOUT_SCALE:-1.0}
 TIMEOUT=$(awk "BEGIN {printf \"%.1f\", ${TIMEOUT:-10} * $TIMEOUT_SCALE}")
 BATCH_SIZE=${BATCH_SIZE:-8}
 
+# macOS doesn't ship a 'timeout' command (not even GitHub's macOS
+# runners have coreutils), so fall back to gtimeout or to a pure-bash
+# equivalent that keeps coreutils' "124 means timed out" convention.
+if ! command -v timeout >/dev/null 2>&1; then
+    if command -v gtimeout >/dev/null 2>&1; then
+        timeout() { gtimeout "$@"; }
+    else
+        timeout() {
+            perl -e '
+                my $t = shift @ARGV;
+                my $pid = fork // die "fork: $!";
+                if (!$pid) { setpgrp(0, 0); exec @ARGV or exit 127; }
+                $SIG{ALRM} = sub {
+                    kill "TERM", -$pid; sleep 2; kill "KILL", -$pid;
+                    exit 124;
+                };
+                alarm int($t + 0.5);
+                waitpid($pid, 0);
+                exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+            ' "$@"
+        }
+    fi
+fi
+
 # Colorize helper (set to false to disable colors)
 USE_COLOR=true
 colorize() {
@@ -22,8 +46,9 @@ colorize() {
 export -f colorize
 export USE_COLOR
 
-# Find all test directories (those containing run.sh)
-TEST_DIRS=$(find test -mindepth 2 -maxdepth 2 -name "run.sh" -type f -executable | sed 's|/run.sh$||' | sort)
+# Find all test directories (those containing run.sh).
+# (-perm -u+x instead of -executable: works in BSD/macOS find too)
+TEST_DIRS=$(find test -mindepth 2 -maxdepth 2 -name "run.sh" -type f -perm -u+x | sed 's|/run.sh$||' | sort)
 
 if [ -z "$TEST_DIRS" ]; then
     echo "No tests found"
