@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .util import PresetResult
+from .util import PresetResult, ExtendedPresetResult
 
 
 def _get_config_dirs() -> list[Path]:
@@ -34,7 +34,7 @@ def _get_config_dirs() -> list[Path]:
     return dirs
 
 
-def load_preset(name_or_path: str) -> PresetResult:
+def load_preset(name_or_path: str) -> ExtendedPresetResult:
     """
     Load preset by name or file path.
 
@@ -44,6 +44,9 @@ def load_preset(name_or_path: str) -> PresetResult:
 
     Args:
         name_or_path: 'python' or './my_preset.py'
+
+    Returns:
+        (server_commands, logic_class, relay_server_commands, relay_spec, init_options)
     """
     # Path detection: contains '/' means external file
     if '/' in name_or_path:
@@ -61,10 +64,16 @@ def load_preset(name_or_path: str) -> PresetResult:
 
     servers_fn = getattr(module, 'servers', None)
     lclass_fn = getattr(module, 'logic_class', None)
+    relay_servers_fn = getattr(module, 'relay_servers', None)
+    relay_spec_fn = getattr(module, 'relay_spec', None)
+    init_options_fn = getattr(module, 'init_options', None)
 
     return (
         servers_fn() if servers_fn else [],
         lclass_fn() if lclass_fn else None,
+        relay_servers_fn() if relay_servers_fn else [],
+        relay_spec_fn() if relay_spec_fn else None,
+        init_options_fn() if init_options_fn else None,
     )
 
 
