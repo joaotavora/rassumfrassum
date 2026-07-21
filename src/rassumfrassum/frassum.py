@@ -476,7 +476,7 @@ class LspLogic:
             server.caps = caps.copy() if caps else {}
 
             # index the commands of "executeCommandProvider"
-            if (p := payload.get("executeCommandProvider")) and (
+            if (p := caps.get("executeCommandProvider")) and (
                 cmds := p.get("commands")
             ):
                 for c in cmds:
