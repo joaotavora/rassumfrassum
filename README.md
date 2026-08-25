@@ -99,6 +99,8 @@ are very simple, and some are slightly more complex.
 
 * `vuetail`: for `vue-language-server` + `tailwindcss-language-server`
   (complex)
+
+* `emacsvue`: for `vue-language-server` with tsserver relay (complex)
   
 The "complex" presets use special hooks of the 'LspLogic' class to
 massage the exchanged messages.  The servers in question (usually the

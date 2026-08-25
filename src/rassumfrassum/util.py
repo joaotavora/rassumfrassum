@@ -6,6 +6,13 @@ ServerCommand = list[str]
 ServerCommands = list[ServerCommand]
 PresetResult = tuple[ServerCommands, type | None]
 
+# Extended preset result with relay support
+# (server_commands, logic_class, relay_server_commands, relay_spec, init_options)
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .relay import RelaySpec
+ExtendedPresetResult = tuple[ServerCommands, type | None, ServerCommands, "RelaySpec | None", dict | None]
+
 # Log levels (lower number = higher priority)
 LOG_SILENT = 0
 LOG_WARN = 1
