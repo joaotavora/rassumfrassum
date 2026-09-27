@@ -4,8 +4,21 @@ cd $(dirname "$0")
 # Server s2 will crash after initialization
 # We expect rass to exit with error code 1
 
+# On Windows rass can't make its fatal exit while the stdin-reading
+# executor thread is blocked (see WINDOWS_KLUDGE in test2.py), so this
+# scenario isn't testable there
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || -n "$WINDIR" ]]; then
+    echo "Windows, skipping test" >&2
+    exit 77
+fi
+
+# The client waits for EOF from rass, which macOS's kqueue never
+# reports on FIFOs, so cap its wait (with perl's alarm, since macOS
+# has no 'timeout' command).  rass's exit code decides the test and
+# yoyo.sh's pipefail propagates the pipeline's rightmost (i.e.
+# rass's) non-zero exit status.
 set +e
-../yoyo.sh ./client.py --rass-- \
+../yoyo.sh perl -e 'alarm shift; exec @ARGV' 5 ./client.py --rass-- \
     -- python ./server.py --name s1 \
     -- python ./server.py --name s2 --crash-after-init
 EXIT_CODE=$?
