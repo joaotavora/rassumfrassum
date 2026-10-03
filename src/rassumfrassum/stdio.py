@@ -50,12 +50,19 @@ async def create_stdin_reader() -> asyncio.StreamReader:
         return reader
 
 
-class _WindowsStdoutWriter:
-    """A StreamWriter-like wrapper for Windows stdout using run_in_executor."""
+class _SyncStdoutWriter:
+    """A StreamWriter-like wrapper using synchronous stdout writes.
+
+    Used on Windows, where asyncio can't connect pipe transports to
+    stdio, and on macOS, where kqueue-based write transports are
+    broken for FIFOs (connection_lost fires right after the first
+    drain, breaking all subsequent writes).
+    """
 
     def __init__(self, loop):
         self._loop = loop
         self._buffer = bytearray()
+        self._lock = asyncio.Lock()
 
     def write(self, data):
         """Add data to the buffer."""
@@ -77,7 +84,10 @@ class _WindowsStdoutWriter:
             except Exception:
                 pass
 
-        await self._loop.run_in_executor(None, blocking_write, data)
+        # Serialize: concurrent executor writes could hit the pipe out
+        # of order (pipe writes are only atomic up to PIPE_BUF).
+        async with self._lock:
+            await self._loop.run_in_executor(None, blocking_write, data)
 
     def close(self):
         """Close the writer."""
@@ -91,16 +101,15 @@ class _WindowsStdoutWriter:
 async def create_stdout_writer() -> asyncio.StreamWriter:
     """Create an asyncio StreamWriter for stdout.
 
-    On Windows: Uses run_in_executor with blocking writes.
-    On Unix: Direct connection to sys.stdout.
+    On Windows and macOS: synchronous writes via run_in_executor, see
+    _SyncStdoutWriter.
+    On other Unixes: direct connection to sys.stdout.
     """
     loop = asyncio.get_event_loop()
 
-    if platform.system() == 'Windows':
-        # Windows: Use custom wrapper with run_in_executor
-        return _WindowsStdoutWriter(loop)
+    if platform.system() in ('Windows', 'Darwin'):
+        return _SyncStdoutWriter(loop)
     else:
-        # Unix: Direct connection works fine
         transport, protocol = await loop.connect_write_pipe(
             asyncio.streams.FlowControlMixin, sys.stdout
         )
