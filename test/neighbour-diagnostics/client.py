@@ -35,6 +35,22 @@ async def main():
     got = await reports(client, 3)
     assert got == {(A, 1, 's1'), (A, 1, 's2'), (B, 0, 's1')}, got
 
+    # "boom!" keeps the diagnostics, so s1's "unchanged" report for
+    # the neighbour must be dropped.
+    await client.notify('textDocument/didChange', {
+        'textDocument': {'uri': A, 'version': 2},
+        'contentChanges': [{'text': 'boom!'}],
+    })
+    got = await reports(client, 2)
+    assert got == {(A, 2, 's1'), (A, 2, 's2')}, got
+
+    await client.notify('textDocument/didChange', {
+        'textDocument': {'uri': A, 'version': 3},
+        'contentChanges': [{'text': 'x'}],
+    })
+    got = await reports(client, 3)
+    assert got == {(A, 3, 's1'), (A, 3, 's2'), (B, 0, 's1')}, got
+
     await client.byebye()
 
 if __name__ == '__main__':

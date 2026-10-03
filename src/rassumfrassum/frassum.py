@@ -898,7 +898,13 @@ class LspLogic:
             elif pull_response:
                 resultId = pull_response.get("resultId")
                 state.inflight_pulls[id(server)] = cast(str | int, resultId)
+                kind = pull_response.get('kind')
                 diagnostics = pull_response.get('items', [])
+                # The client keeps a neighbour's diagnostics while its
+                # version doesn't change, so an unchanged report would
+                # only make it re-report the same diagnostics.
+                if kind == 'unchanged' and uri != orig_uri:
+                    return
                 self._stash_diagnostics_data(diagnostics, server, state)
                 _add_source_attribution(diagnostics, server)
                 # Send as streamDiagnostics notification
@@ -906,7 +912,7 @@ class LspLogic:
                     'uri': uri,
                     'version': state.docver,
                     'token': f"{server.name}-{id(server)}",
-                    'kind': pull_response.get('kind'),
+                    'kind': kind,
                 }
                 if diagnostics:
                     params['diagnostics'] = diagnostics
