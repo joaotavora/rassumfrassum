@@ -1,13 +1,12 @@
 #!/usr/bin/env python
-"""Server for textdocumentsync-line-separators test: mirrors the document and reports it on didSave.
+"""Server for the textdocumentsync-line-separators test.
 
 Applies didChange content changes to its own copy of the document,
 splitting lines at LF, CRLF and CR as the LSP specification defines,
-and notes any change
-whose shape doesn't match the advertised sync kind.  On didSave, sends
-the copy and those notes upstream in a 'rass-test/docText' notification
-so the client can check them.  (A server that exits on a failed check
-doesn't make run.sh fail.)
+and notes any change whose shape doesn't match the advertised sync
+kind or whose edges split or form a CRLF pair.  On didSave, sends the copy and those notes upstream in a
+'rass-test/docText' notification so the client can check them.  (A
+server that exits on a failed check doesn't make run.sh fail.)
 """
 
 import argparse
@@ -30,11 +29,19 @@ state = {'doc': '', 'errors': []}
 
 
 def offset(text, pos):
-    """Offset of an LSP position (code points = UTF-16 units here)."""
+    """Offset of an LSP position (code points = UTF-16 units here).
+
+    Like the LSP specification, clamps a line past the end to the end
+    of the document and a character past the end of a line to the end
+    of that line's content, so a position inside a CRLF pair lands
+    before the CR."""
     line_starts = [0] + [m.end() for m in re.finditer(r'\r\n|\r|\n', text)]
     if pos['line'] >= len(line_starts):
         return len(text)
-    return line_starts[pos['line']] + pos['character']
+    start = line_starts[pos['line']]
+    end = re.compile(r'\r\n|\r|\n').search(text, start)
+    content_end = end.start() if end else len(text)
+    return min(start + pos['character'], content_end)
 
 
 def apply_changes(text, changes):
@@ -50,6 +57,24 @@ def apply_changes(text, changes):
     return text
 
 
+def splits_or_forms_crlf(text, change):
+    """Whether a ranged change's edges split a CRLF pair or form one.
+
+    vscode-languageserver-textdocument, which many servers use, can't
+    address a position inside a CRLF pair, and miscounts lines after
+    an edit that joins a CR to an LF."""
+    start = offset(text, change['range']['start'])
+    end = offset(text, change['range']['end'])
+    after = text[:start] + change['text'] + text[end:]
+    edges = [
+        (text, start),
+        (text, end),
+        (after, start),
+        (after, start + len(change['text'])),
+    ]
+    return any(i > 0 and t[i - 1 : i + 1] == '\r\n' for t, i in edges)
+
+
 def did_open(params):
     state['doc'] = params['textDocument']['text']
 
@@ -61,7 +86,10 @@ def did_change(params):
             state['errors'].append(f"full-sync server got {changes}")
     elif not all('range' in c for c in changes):
         state['errors'].append(f"incremental server got {changes}")
-    state['doc'] = apply_changes(state['doc'], changes)
+    for change in changes:
+        if 'range' in change and splits_or_forms_crlf(state['doc'], change):
+            state['errors'].append(f"CRLF pair split or formed by {change}")
+        state['doc'] = apply_changes(state['doc'], [change])
 
 
 def did_save(params):

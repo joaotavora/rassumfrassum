@@ -17,6 +17,13 @@ CASES = [
     ('page\x0c\nline sep\nlast\n', 'page\x0c\nline sep\nLAST\n'),
     ('one\rtwo\nthree\n', 'one\rtwo\nTHREE\n'),
     ('crlf\r\nnel\x85vt\x0bx\nend', 'crlf\r\nnel\x85vt\x0bx\nEND'),
+    # Edits next to a CRLF pair, which a change must neither split nor
+    # form at its edges
+    ('a\r\nb\n', 'a\nb\n'),
+    ('a\r\nb\n', 'a\rb\n'),
+    ('x\r\ny\n', 'x\r\r\ny\n'),
+    ('a\r', 'a\r\nb'),
+    ('cr\rx\nlf', 'cr\r\nlf'),
 ]
 
 

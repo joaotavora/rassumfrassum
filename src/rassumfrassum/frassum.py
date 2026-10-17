@@ -3,7 +3,6 @@ LSP-specific message routing and merging logic.
 """
 
 import asyncio
-import difflib
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -987,41 +986,67 @@ def _apply_content_changes(text: str, changes: JSON) -> str:
     return text
 
 
-def _split_lines(text: str) -> list[str]:
-    """Split text into lines, keeping their line endings.
+def _lsp_position_of(text: str, index: int) -> JSON:
+    """Convert a Python string index into an LSP position.
 
-    Unlike str.splitlines, break only at the end-of-line sequences the
-    LSP specification defines (LF, CRLF and CR), not at form feeds,
-    U+2028 and the like, which servers don't treat as line breaks."""
-    return re.findall(r'[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+', text)
+    Lines end at LF, CRLF or CR, as the LSP specification defines, and
+    characters count UTF-16 code units.  INDEX must not fall between
+    the CR and LF of a CRLF pair."""
+    line = (
+        text.count('\n', 0, index)
+        + text.count('\r', 0, index)
+        - text.count('\r\n', 0, index)
+    )
+    line_start = max(text.rfind('\n', 0, index), text.rfind('\r', 0, index)) + 1
+    segment = text[line_start:index]
+    return {
+        'line': line,
+        'character': len(segment) + sum(ord(c) > 0xFFFF for c in segment),
+    }
 
 
 def _diff_changes(old: str, new: str) -> list[JSON]:
-    """Compute line-based ranged contentChanges transforming old into new.
+    """Compute a ranged contentChange transforming old into new.
 
-    Ranges are rebased so that applying the changes in order (see
-    _apply_content_changes) yields new."""
-    old_lines = _split_lines(old)
-    new_lines = _split_lines(new)
-    matcher = difflib.SequenceMatcher(
-        None, old_lines, new_lines, autojunk=False
-    )
-    changes = []
-    line_delta = 0
-    for op, i1, i2, j1, j2 in matcher.get_opcodes():
-        if op == 'equal':
-            continue
-        changes.append(
-            {
-                'range': {
-                    'start': {'line': i1 + line_delta, 'character': 0},
-                    'end': {'line': i2 + line_delta, 'character': 0},
-                },
-                'text': ''.join(new_lines[j1:j2]),
-            }
-        )
-        line_delta += (j2 - j1) - (i2 - i1)
-    return changes
+    Trims the common prefix and suffix and replaces what's between them
+    in a single change, which takes linear time even on large documents
+    with many repeated lines."""
+    if old == new:
+        return []
+    limit = min(len(old), len(new))
+    prefix = 0
+    while prefix < limit and old[prefix] == new[prefix]:
+        prefix += 1
+    suffix = 0
+    while suffix < limit - prefix and old[-1 - suffix] == new[-1 - suffix]:
+        suffix += 1
+    # Widen the change so that neither edge splits a CRLF pair of old
+    # (servers can't address a position between CR and LF) or forms
+    # one in new (servers that track line offsets incrementally, such
+    # as those using vscode-languageserver-textdocument, then miscount
+    # lines).
+    if prefix > 0 and '\r\n' in (
+        old[prefix - 1 : prefix + 1],
+        new[prefix - 1 : prefix + 1],
+    ):
+        prefix -= 1
+    end = len(old) - suffix
+    new_end = len(new) - suffix
+    if suffix > 0 and '\r\n' in (
+        old[end - 1 : end + 1],
+        new[new_end - 1 : new_end + 1],
+    ):
+        suffix -= 1
+        end += 1
+    return [
+        {
+            'range': {
+                'start': _lsp_position_of(old, prefix),
+                'end': _lsp_position_of(old, end),
+            },
+            'text': new[prefix : len(new) - suffix],
+        }
+    ]
 
 
 def _add_source_attribution(diags, server):
