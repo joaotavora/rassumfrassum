@@ -987,13 +987,22 @@ def _apply_content_changes(text: str, changes: JSON) -> str:
     return text
 
 
+def _split_lines(text: str) -> list[str]:
+    """Split text into lines, keeping their line endings.
+
+    Unlike str.splitlines, break only at the end-of-line sequences the
+    LSP specification defines (LF, CRLF and CR), not at form feeds,
+    U+2028 and the like, which servers don't treat as line breaks."""
+    return re.findall(r'[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+', text)
+
+
 def _diff_changes(old: str, new: str) -> list[JSON]:
     """Compute line-based ranged contentChanges transforming old into new.
 
     Ranges are rebased so that applying the changes in order (see
     _apply_content_changes) yields new."""
-    old_lines = old.splitlines(keepends=True)
-    new_lines = new.splitlines(keepends=True)
+    old_lines = _split_lines(old)
+    new_lines = _split_lines(new)
     matcher = difflib.SequenceMatcher(
         None, old_lines, new_lines, autojunk=False
     )
