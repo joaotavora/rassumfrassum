@@ -980,7 +980,8 @@ def _apply_content_changes(text: str, changes: JSON) -> str:
     for change in cast(list, changes):
         new = change.get('text', '')
         if (r := change.get('range')) is None:
-            return new
+            text = new
+            continue
         start = _lsp_position(text, r['start'])
         end = _lsp_position(text, r['end'])
         text = text[:start] + new + text[end:]
