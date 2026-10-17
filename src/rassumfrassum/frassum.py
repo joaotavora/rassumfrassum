@@ -135,7 +135,8 @@ class LspLogic:
 
         # initialize goes to all servers
         elif method == 'initialize':
-            doc_caps = params['capabilities']['textDocument']
+            caps = params.setdefault('capabilities', {})
+            doc_caps = caps.setdefault('textDocument', {})
             # Check for client $streamingDiagnostics capability
             if doc_caps.pop('$streamingDiagnostics', None):
                 self.opts.stream_diagnostics = True
@@ -143,7 +144,7 @@ class LspLogic:
                 info("Client requested streaming diagnostics mode")
 
             # Force UTF-16 encoding to avoid position mismatches (#8)
-            if g := params['capabilities'].get('general'):
+            if g := caps.get('general'):
                 g['positionEncodings'] = ['utf-16']
 
             # In streaming mode, add diagnostic capability to client
