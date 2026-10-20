@@ -59,8 +59,15 @@ def _vue_server_info() -> tuple[int, str | None]:
     # Ask node to resolve the package from the current project.
     try:
         proc = subprocess.run(
-            ['node', '-p', "require.resolve('@vue/language-server/package.json')"],
-            capture_output=True, text=True, timeout=10,
+            [
+                'node',
+                '-p',
+                "require.resolve('@vue/language-server/package.json')",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         pkgjson = Path(proc.stdout.strip())
         pkg = json.loads(pkgjson.read_text())
@@ -72,7 +79,10 @@ def _vue_server_info() -> tuple[int, str | None]:
     try:
         proc = subprocess.run(
             ['vue-language-server', '--version'],
-            capture_output=True, text=True, timeout=10,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return (int(proc.stdout.strip().split('.')[0]), None)
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -108,7 +118,10 @@ def _find_tsdk() -> str | None:
     try:
         proc = subprocess.run(
             ['npm', 'root', '--global'],
-            capture_output=True, text=True, timeout=10,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         cand = Path(proc.stdout.strip()) / 'typescript' / 'lib'
         if (cand / 'typescript.js').exists():
@@ -125,26 +138,12 @@ class Vue2Logic(LspLogic):
         self, method: str, params: JSON, servers: list[Server]
     ):
         if method == 'initialize':
-            # vue-language server absolutely needs a TypeScript SDK
-            # path. Find it via npm
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    'npm', 'list', '--global', '--parseable', 'typescript',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await proc.communicate()
-                first_line = stdout.decode().strip().split('\n')[0]
-                tsdk_path = str(Path(first_line) / 'lib')
-            except Exception:
-                tsdk_path = '/usr/local/lib/node_modules/typescript/lib'
-
+            # vue-language-server v2 absolutely needs a TypeScript SDK
+            options: JSON = {'vue': {'hybridMode': False}}
+            if tsdk := _find_tsdk():
+                options['typescript'] = {'tsdk': tsdk}
             params['initializationOptions'] = dmerge(
-                params.get('initializationOptions') or {},
-                {
-                    'typescript': {'tsdk': tsdk_path},
-                    'vue': {'hybridMode': False},
-                },
+                params.get('initializationOptions') or {}, options
             )
         return await super().on_client_request(method, params, servers)
 
@@ -169,7 +168,7 @@ class Vue3Logic(LspLogic):
     ):
         if method == 'initialize':
             _, location = _vue_server_info()
-            options = {
+            options: JSON = {
                 # Tells typescript-language-server to load the
                 # plugin that makes tsserver understand .vue files.
                 # The other servers ignore this key.
@@ -232,22 +231,24 @@ class Vue3Logic(LspLogic):
             warn(f"tsserver relay: '{command}' failed: {response}")
         body = None if is_error else (cast(JSON, response) or {}).get('body')
         # Always answer, else vue-language-server hangs forever
-        await self.notify_server(self.vue, 'tsserver/response', [[seq, body]])
+        await self.notify_server(
+            self.vue, 'tsserver/response', cast(JSON, [[seq, body]])
+        )
 
 
 def servers():
     """vue-language-server, plus TypeScript for v3."""
     major, _ = _vue_server_info()
     vue = ['vue-language-server', '--stdio']
+    if not (tsdk := _find_tsdk()):
+        warn(
+            "Can't find a usable TypeScript for vue-language-server."
+            "  Install one in the project or with"
+            " 'npm install -g typescript@5'."
+        )
     if major >= 3:
-        if tsdk := _find_tsdk():
+        if tsdk:
             vue.append(f'--tsdk={tsdk}')
-        else:
-            warn(
-                "Can't find a usable TypeScript for vue-language-server."
-                "  Install one in the project or with"
-                " 'npm install -g typescript@5'."
-            )
         if shutil.which('typescript-language-server') is None:
             warn(
                 "vue-language-server v3 needs typescript-language-server"
