@@ -67,7 +67,7 @@ tweaking.  Many presets are simple and are just Python files with a
 
 So-called hooking presets hook into LSP messages to hide the typical
 initialization/configuration pains from clients, see
-[vuetail.py][vue-preset].
+[vue.py][vue-preset].
 
 ### Using Presets
 
@@ -97,8 +97,8 @@ are very simple, and some are slightly more complex.
 
 * `tsbiome`: for `typescript-language-server` + `biome` (simple)
 
-* `vuetail`: for `vue-language-server` + `tailwindcss-language-server`
-  (complex).  With `vue-language-server` v3, this also launches
+* `vue`: for `vue-language-server` (complex).  With
+  `vue-language-server` v3, this also launches
   `typescript-language-server` (>= 4.4) and brokers the
   [`tsserver/request` protocol extension][tsserver-request] between
   the two, something Vue v3 needs and which only VSCode-like clients
@@ -106,6 +106,8 @@ are very simple, and some are slightly more complex.
   `typescript` must be importable by `vue-language-server` (it's a
   regular dependency in most Vue projects).  `vue-language-server` v2
   also works, and there the TypeScript server isn't needed.
+
+* `vuetail`: like `vue`, plus `tailwindcss-language-server`.
   
 The "complex" presets use special hooks of the 'LspLogic' class to
 massage the exchanged messages.  The servers in question (usually the
@@ -450,7 +452,7 @@ in the `eglot-handle-notification` method for
 [neovim]: https://neovim.io/
 [codebook]: https://github.com/blopker/codebook
 [typos]: https://github.com/tekumara/typos-lsp
-[vue-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/vuetail.py
+[vue-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/vue.py
 [tsserver-request]: https://github.com/vuejs/language-tools/discussions/5456
 [python-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/python.py
 [basedruff-preset]: https://github.com/joaotavora/rassumfrassum/blob/master/src/rassumfrassum/presets/basedruff.py

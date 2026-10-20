@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test client for the vuetail preset with vue-language-server v3.
+Test client for the vue and vuetail presets with vue-language-server v3.
 
 vue-language-server v3 is unusable unless the client (here, rass
 itself via the vuetail preset) brokers its 'tsserver/request'

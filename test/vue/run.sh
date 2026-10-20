@@ -25,4 +25,5 @@ fi
 # Use the fixture-pinned servers regardless of what's in PATH
 export PATH="$PWD/fixture/node_modules/.bin:$PATH"
 
+python ../yoyo.py ./client.py --rass-- vue
 python ../yoyo.py ./client.py --rass-- vuetail
