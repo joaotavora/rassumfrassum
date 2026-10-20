@@ -31,6 +31,12 @@ jobs:
         HOMEBREW_NO_AUTO_UPDATE: 1
       run: brew install coreutils
 
+    # Up front, else installing eats into the vuetail test's timeout.
+    # Not on Windows, where that test is skipped.
+    - name: Install vuetail test fixture
+      if: runner.os != 'Windows'
+      run: npm install --silent --prefix test/vuetail/fixture
+
     - name: Run tests
       shell: bash
       # Timing-sensitive tests get flaky when 8 of them compete for
