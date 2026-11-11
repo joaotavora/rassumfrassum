@@ -903,13 +903,13 @@ class LspLogic:
         """
 
         async def doit(server: Server, uri: str, state: LspDocument):
+            req = { 'textDocument': {'uri': uri} }
+            if (prev_id := state.inflight_pulls.get(id(server))) is not None:
+                req['previousResultId'] = prev_id
             is_error, pull_response = await self.request_server(
                 server,
                 'textDocument/diagnostic',
-                {
-                    'textDocument': {'uri': uri},
-                    'previousResultId': state.inflight_pulls.get(id(server)),
-                },
+                req,
             )
 
             if is_error:
