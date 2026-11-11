@@ -281,13 +281,15 @@ uv sync   # or: python -m venv .venv && .venv/bin/pip install -e . --group dev
 npm install -g --prefix .venv/node typescript-language-server \
     typescript@6 @biomejs/biome vscode-langservers-extracted
 ln -s "$PWD"/.venv/node/bin/* .venv/bin/
+npm install -g --prefix .venv/tsc typescript@7
+ln -sf "$PWD"/.venv/tsc/bin/tsc .venv/bin/tsc
 cargo install --root .venv codebook-lsp
 source .venv/bin/activate
 test/run-all.sh
 ```
 
-`typescript@6` because TypeScript 7 no longer ships the `tsserver`
-that `typescript-language-server` needs.
+`typescript@6` and `typescript@7` are installed independently for
+`typescript-language-server` and `tsc --lsp` tests respectively.
 
 ### Logging
 
